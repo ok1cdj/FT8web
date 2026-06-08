@@ -48,6 +48,17 @@ export default function App() {
       return (localStorage.getItem('ft8_finalMessageMode') as 'RR73'|'RRR') || 'RR73';
   });
 
+  const [catMode, setCatMode] = useState<'manual'|'kenwood'|'icom'>(() => {
+    return (localStorage.getItem('ft8_catMode') as 'manual'|'kenwood'|'icom') || 'manual';
+  });
+  const [catBaudRate, setCatBaudRate] = useState<number>(() => {
+    const saved = localStorage.getItem('ft8_catBaudRate');
+    return saved ? Number(saved) : 38400;
+  });
+  const [icomAddress, setIcomAddress] = useState<string>(() => {
+    return localStorage.getItem('ft8_icomAddress') || '94';
+  });
+
   const [decodeStats, setDecodeStats] = useState<{ count: number, durationMs: number } | null>(null);
 
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -105,7 +116,10 @@ export default function App() {
       localStorage.setItem('ft8_decodeDepth', decodeDepth.toString());
       localStorage.setItem('ft8_maxRetries', maxRetries.toString());
       localStorage.setItem('ft8_finalMessageMode', finalMessageMode);
-  }, [myCall, myGrid, txFreq, decodeDepth, maxRetries, finalMessageMode]);
+      localStorage.setItem('ft8_catMode', catMode);
+      localStorage.setItem('ft8_catBaudRate', catBaudRate.toString());
+      localStorage.setItem('ft8_icomAddress', icomAddress);
+  }, [myCall, myGrid, txFreq, decodeDepth, maxRetries, finalMessageMode, catMode, catBaudRate, icomAddress]);
 
   // UI State
   const [showSettings, setShowSettings] = useState(false);
@@ -227,12 +241,19 @@ export default function App() {
                 const myCall = myCallRef.current;
                 const targetCall = targetCallRef.current;
                 
-                // Condition A: Both myCall and targetCall present
-                if (myCall && targetCall && msg.message.includes(myCall) && msg.message.includes(targetCall)) return true;
-                
-                // Condition B: message starts with myCall
                 const parts = msg.message.trim().split(/\s+/);
-                if (parts[0] === myCall) return true;
+                
+                if (myCall && msg.message.includes(myCall)) return true;
+                
+                if (targetCall) {
+                    // Normalize parts to remove hashed call brackets like <W1AW> if present
+                    const cleanParts = parts.map(p => p.replace(/[<>]/g, ''));
+                    
+                    // Check if target is the transmitter (Source)
+                    if (cleanParts.length >= 2 && cleanParts[1] === targetCall) return true;
+                    // CQ/QRZ with modifier format: CQ DX W1AW FN34
+                    if (cleanParts.length >= 3 && (cleanParts[0] === 'CQ' || cleanParts[0] === 'QRZ') && cleanParts[2] === targetCall) return true;
+                }
                 
                 return false;
             }).map((msg: FT8DecodedMessage) => ({ ...msg, message: "<- " + msg.message, isIncoming: true }));
@@ -963,6 +984,55 @@ export default function App() {
                   <option value="RRR">RRR (Requires 73 from target)</option>
                 </select>
               </div>
+
+              <hr className="border-border-subtle my-2" />
+              <h3 className="text-xs font-bold uppercase tracking-widest text-[#8e9299]">CAT Radio Control</h3>
+              
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] uppercase tracking-widest text-text-muted">Protocol Mode</label>
+                <select 
+                  value={catMode}
+                  onChange={e => setCatMode(e.target.value as 'manual' | 'kenwood' | 'icom')}
+                  className="bg-app border border-border-input text-text-main rounded px-3 py-2 text-xs font-mono w-full focus:outline-none focus:border-[#4caf50]"
+                >
+                  <option value="manual">Manual (No CAT / iOS)</option>
+                  <option value="kenwood">Kenwood / QDX</option>
+                  <option value="icom">Icom (CI-V)</option>
+                </select>
+              </div>
+
+              {catMode !== 'manual' && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] uppercase tracking-widest text-text-muted">Baud Rate</label>
+                  <select 
+                    value={catBaudRate}
+                    onChange={e => setCatBaudRate(Number(e.target.value))}
+                    className="bg-app border border-border-input text-text-main rounded px-3 py-2 text-xs font-mono w-full focus:outline-none focus:border-[#4caf50]"
+                  >
+                    <option value="4800">4800</option>
+                    <option value="9600">9600</option>
+                    <option value="19200">19200</option>
+                    <option value="38400">38400</option>
+                    <option value="57600">57600</option>
+                    <option value="115200">115200</option>
+                  </select>
+                </div>
+              )}
+
+              {catMode === 'icom' && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] uppercase tracking-widest text-text-muted">Icom Address (Hex)</label>
+                  <input 
+                    type="text" 
+                    value={icomAddress} 
+                    onChange={e => setIcomAddress(e.target.value.toUpperCase())} 
+                    className="bg-app border border-border-input rounded px-3 py-2 text-sm font-mono w-full focus:outline-none focus:border-[#4caf50] text-text-main uppercase" 
+                    placeholder="94"
+                  />
+                </div>
+              )}
+
+              <hr className="border-border-subtle my-2" />
 
               <div className="flex items-center justify-between pt-2">
                  <label className="text-[10px] uppercase tracking-widest text-text-muted">Color Scheme</label>
