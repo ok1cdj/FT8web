@@ -51,6 +51,9 @@ class ManualDriver {
     // Doesn't interact with hardware
     return Promise.resolve(0);
   }
+  async disconnect() {
+    return Promise.resolve();
+  }
 }
 
 // ---------------------------------------------------------
@@ -64,27 +67,43 @@ class KenwoodDriver {
     this.writer = null;
     this.buffer = "";
     this.pendingFreqResolvers = [];
+    this.encoder = new TextEncoder();
+    this.decoder = new TextDecoder();
+    this.isActive = false;
   }
 
   async connect(port) {
+    if (!port) {
+      throw new Error("No serial port provided for Kenwood connection");
+    }
     this.port = port;
     if (!this.port.readable) {
         try {
             // Kenwood preferred baud rates are typically 38400 or 57600
             await this.port.open({ baudRate: this.baudRate });
         } catch (e) {
-            console.log("Kenwood Port: ", e);
+            console.error("Kenwood Port open error: ", e);
+            throw new Error(`Failed to open Kenwood CAT port (${e.message || e})`);
         }
     }
     
-    // Implement Text encoder/decoder for ASCII stream
-    this.textDecoder = new TextDecoderStream();
-    this.readClosed = this.port.readable.pipeTo(this.textDecoder.writable);
-    this.reader = this.textDecoder.readable.getReader();
-
-    this.textEncoder = new TextEncoderStream();
-    this.writeClosed = this.textEncoder.readable.pipeTo(this.port.writable);
-    this.writer = this.textEncoder.writable.getWriter();
+    if (!this.port.readable || !this.port.writable) {
+        throw new Error("Kenwood serial port opened but readable/writable streams are unavailable. Ensure another app is not using this port.");
+    }
+    
+    try {
+        if (this.port && typeof this.port.setSignals === 'function') {
+            await this.port.setSignals({ dataTerminalReady: false, requestToSend: false });
+            console.log("[CatManager] Forced Kenwood RTS & DTR OFF on connect");
+        }
+    } catch (sigErr) {
+        console.warn("[CatManager] Failed to set signals on connect:", sigErr);
+    }
+    
+    // Use raw binary streams with clean on-the-fly text decoders to avoid pipeTo locking issues
+    this.reader = this.port.readable.getReader();
+    this.writer = this.port.writable.getWriter();
+    this.isActive = true;
     
     // Start continuous read loop
     this.readLoop();
@@ -92,11 +111,12 @@ class KenwoodDriver {
 
   async readLoop() {
     try {
-      while (true) {
+      while (this.isActive) {
         const { value, done } = await this.reader.read();
-        if (done) break;
+        if (done || !this.isActive) break;
         if (value) {
-          this.buffer += value;
+          const text = this.decoder.decode(value);
+          this.buffer += text;
           let semiIndex;
           // Commands are semicolon terminated
           while ((semiIndex = this.buffer.indexOf(';')) !== -1) {
@@ -107,7 +127,9 @@ class KenwoodDriver {
         }
       }
     } catch (e) {
-      console.error("Kenwood Read Loop Error:", e);
+      if (this.isActive) {
+        console.error("Kenwood Read Loop Error:", e);
+      }
     }
   }
 
@@ -124,23 +146,35 @@ class KenwoodDriver {
   }
 
   async setFrequency(freqHz) {
+    if (!this.writer) return;
     // FA needs 11 digits padded with leading zeros
     const freqStr = freqHz.toString().padStart(11, '0');
-    await this.writer.write(`FA${freqStr};`);
+    await this.writer.write(this.encoder.encode(`FA${freqStr};`));
   }
 
   async setTx(isTxActive) {
+    if (!this.writer) return;
     if (isTxActive) {
-      await this.writer.write('TX;');
+      await this.writer.write(this.encoder.encode('TX;'));
     } else {
-      await this.writer.write('RX;');
+      await this.writer.write(this.encoder.encode('RX;'));
     }
   }
 
   async getFrequency() {
+    if (!this.writer) {
+      return Promise.reject(new Error("Kenwood port is not connected"));
+    }
     return new Promise(async (resolve, reject) => {
       this.pendingFreqResolvers.push(resolve);
-      await this.writer.write('FA;');
+      try {
+        await this.writer.write(this.encoder.encode('FA;'));
+      } catch (writeErr) {
+        const idx = this.pendingFreqResolvers.indexOf(resolve);
+        if (idx > -1) this.pendingFreqResolvers.splice(idx, 1);
+        reject(writeErr);
+        return;
+      }
       // Time-out if radio disconnected or unresponsive
       setTimeout(() => {
         const idx = this.pendingFreqResolvers.indexOf(resolve);
@@ -150,6 +184,37 @@ class KenwoodDriver {
         }
       }, 1500);
     });
+  }
+
+  async disconnect() {
+    this.isActive = false;
+    if (!this.port) return;
+    try {
+      if (this.reader) {
+        await this.reader.cancel().catch(() => {});
+        this.reader.releaseLock();
+      }
+    } catch (e) {
+      console.warn("Kenwood release lock error (reader):", e);
+    }
+    try {
+      if (this.writer) {
+        this.writer.releaseLock();
+      }
+    } catch (e) {
+      console.warn("Kenwood release lock error (writer):", e);
+    }
+    try {
+      if (this.port.readable || this.port.writable) {
+        await this.port.close().catch(() => {});
+      }
+    } catch (e) {
+      console.warn("Kenwood port close error:", e);
+    }
+    this.port = null;
+    this.reader = null;
+    this.writer = null;
+    this.buffer = "";
   }
 }
 
@@ -166,29 +231,48 @@ class IcomDriver {
     this.buffer = [];
     this.lastTransmittedBytes = [];
     this.pendingFreqResolvers = [];
+    this.isActive = false;
   }
 
   async connect(port) {
+    if (!port) {
+      throw new Error("No serial port provided for Icom connection");
+    }
     this.port = port;
     if (!this.port.readable) {
         try {
             await this.port.open({ baudRate: this.baudRate }); // Standard modern Icom rate
         } catch (e) {
-            console.log("Icom Port:", e);
+            console.error("Icom Port open error:", e);
+            throw new Error(`Failed to open Icom CAT port (${e.message || e})`);
         }
+    }
+    
+    if (!this.port.readable || !this.port.writable) {
+        throw new Error("Icom serial port opened but readable/writable streams are unavailable. Ensure another app is not using this port.");
+    }
+    
+    try {
+        if (this.port && typeof this.port.setSignals === 'function') {
+            await this.port.setSignals({ dataTerminalReady: false, requestToSend: false });
+            console.log("[CatManager] Forced Icom RTS & DTR OFF on connect");
+        }
+    } catch (sigErr) {
+        console.warn("[CatManager] Failed to set signals on connect:", sigErr);
     }
     
     // ICOM relies purely on raw binary bytes (Uint8Array)
     this.reader = this.port.readable.getReader();
     this.writer = this.port.writable.getWriter();
+    this.isActive = true;
     this.readLoop();
   }
 
   async readLoop() {
     try {
-      while (true) {
+      while (this.isActive) {
         const { value, done } = await this.reader.read();
-        if (done) break;
+        if (done || !this.isActive) break;
         if (value) {
           // Push received bytes to rolling buffer
           for (let i = 0; i < value.length; i++) {
@@ -198,7 +282,9 @@ class IcomDriver {
         }
       }
     } catch (e) {
-      console.error("Icom Read Loop Error:", e);
+      if (this.isActive) {
+        console.error("Icom Read Loop Error:", e);
+      }
     }
   }
 
@@ -279,6 +365,7 @@ class IcomDriver {
   }
 
   async sendFrame(cmd, subCmd, dataBytes = []) {
+    if (!this.writer) return;
     // 0xE0 represents the "Controller" (PC) address commonly used
     let packet = [0xFE, 0xFE, this.targetAddress, 0xE0, cmd];
     if (subCmd !== null && subCmd !== undefined) {
@@ -308,11 +395,21 @@ class IcomDriver {
   }
 
   async getFrequency() {
+    if (!this.writer) {
+      return Promise.reject(new Error("Icom port is not connected"));
+    }
     return new Promise(async (resolve, reject) => {
       this.pendingFreqResolvers.push(resolve);
       
-      // Command 0x03: Request operating frequency
-      await this.sendFrame(0x03, null, []);
+      try {
+        // Command 0x03: Request operating frequency
+        await this.sendFrame(0x03, null, []);
+      } catch (writeErr) {
+        const idx = this.pendingFreqResolvers.indexOf(resolve);
+        if (idx > -1) this.pendingFreqResolvers.splice(idx, 1);
+        reject(writeErr);
+        return;
+      }
       
       setTimeout(() => {
         const idx = this.pendingFreqResolvers.indexOf(resolve);
@@ -322,6 +419,37 @@ class IcomDriver {
         }
       }, 1500);
     });
+  }
+
+  async disconnect() {
+    this.isActive = false;
+    if (!this.port) return;
+    try {
+      if (this.reader) {
+        await this.reader.cancel().catch(() => {});
+        this.reader.releaseLock();
+      }
+    } catch (e) {
+      console.warn("Icom release lock error (reader):", e);
+    }
+    try {
+      if (this.writer) {
+        this.writer.releaseLock();
+      }
+    } catch (e) {
+      console.warn("Icom release lock error (writer):", e);
+    }
+    try {
+      if (this.port.readable || this.port.writable) {
+        await this.port.close().catch(() => {});
+      }
+    } catch (e) {
+      console.warn("Icom port close error:", e);
+    }
+    this.port = null;
+    this.reader = null;
+    this.writer = null;
+    this.buffer = [];
   }
 }
 
@@ -383,5 +511,14 @@ export default class CatManager {
    */
   async getFrequency() {
     return await this.driver.getFrequency();
+  }
+
+  /**
+   * Closes the active port and releases stream locks.
+   */
+  async disconnect() {
+    if (this.driver && typeof this.driver.disconnect === 'function') {
+      await this.driver.disconnect();
+    }
   }
 }

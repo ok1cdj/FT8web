@@ -83,14 +83,14 @@ export default class FT8FSM {
             case 'IDLE':
                 break;
             case 'CQ_SENDING':
-                txString = `CQ ${this.myCall} ${this.myGrid}`;
+                txString = `CQ ${this.myCall} ${(this.myGrid || '').substring(0, 4)}`;
                 break;
             case 'REPLY_SENDING':
                 // Replying to someone else's CQ
                 if (this.directReportCall && this.targetReport) {
                     txString = `${this.targetCall} ${this.myCall} ${this.targetReport}`;
                 } else {
-                    txString = `${this.targetCall} ${this.myCall} ${this.myGrid || ''}`.trim();
+                    txString = `${this.targetCall} ${this.myCall} ${(this.myGrid || '').substring(0, 4)}`.trim();
                 }
                 break;
             case 'REPORT_SENDING':

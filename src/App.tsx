@@ -3,6 +3,7 @@ import { Activity, Settings, X, HelpCircle } from 'lucide-react';
 import { getCaptureWorkletUrl } from './AudioWorkletBlob';
 import { encodeFT8 } from '@e04/ft8ts';
 import CatManager from './CatManager.js';
+import FT8FSM, { QueuedCaller } from './FT8FSM';
 
 export interface FT8DecodedMessage {
   time: string;
@@ -10,6 +11,40 @@ export interface FT8DecodedMessage {
   freq: number;
   message: string;
   isDivider?: boolean;
+  isTx?: boolean;
+  isIncoming?: boolean;
+}
+
+function extractTransmitterCallsign(message: string): string | null {
+  if (!message) return null;
+  // Strip any prepended arrow indicators like "<- " or "-> "
+  const cleanMsg = message.replace(/^<-?\s+/, '').replace(/^->\s+/, '').trim();
+  const parts = cleanMsg.split(/\s+/).map(p => p.replace(/[<>]/g, ''));
+  
+  if (parts.length === 0) return null;
+  
+  const first = parts[0].toUpperCase();
+  if (first === 'CQ' || first === 'QRZ') {
+    if (parts.length >= 3) {
+      const hasDigit1 = /\d/.test(parts[1]);
+      const hasDigit2 = /\d/.test(parts[2]);
+      if (!hasDigit1 && hasDigit2) {
+        return parts[2];
+      }
+    }
+    if (parts.length >= 2) {
+      return parts[1];
+    }
+    return null;
+  }
+  
+  // For standard QSOs: ADDRESSEE TRANSMITTER [REPORT/MSG]
+  // The transmitter whom we hear is the second token
+  if (parts.length >= 2) {
+    return parts[1];
+  }
+  
+  return parts[0] || null;
 }
 
 export default function App() {
@@ -178,7 +213,7 @@ export default function App() {
         mode: catMode, 
         icomAddress: isNaN(parsedAddr) ? 0x94 : parsedAddr,
         baudRate: catBaudRate
-      });
+      } as any);
       await cat.connect(port);
       catRef.current = cat;
       return cat;
@@ -191,34 +226,58 @@ export default function App() {
   // Poll CAT frequency
   useEffect(() => {
     if (!serialPort || catMode === 'manual') {
-      catRef.current = null;
+      if (catRef.current) {
+        catRef.current.disconnect().catch(err => console.error("Error disconnecting CAT:", err));
+        catRef.current = null;
+      }
       return;
     }
 
     let interval: any;
+    let isActive = true;
 
     const startPolling = () => {
       interval = setInterval(() => {
-        if (catRef.current) {
+        if (catRef.current && isActive) {
           catRef.current.getFrequency()
             .then(freq => {
-              if (freq > 0) setVfoFreq(freq);
+              if (freq > 0 && isActive) setVfoFreq(freq);
             })
             .catch(() => {});
         }
       }, 2000);
     };
 
-    if (!catRef.current) {
-      initCatManager(serialPort)
-        .then(() => startPolling())
-        .catch(e => setCatTestResult("Auto-init error: " + e.message));
-    } else {
-      startPolling();
-    }
+    const init = async () => {
+      // Disconnect current driver cleanly first
+      if (catRef.current) {
+        await catRef.current.disconnect().catch(() => {});
+        catRef.current = null;
+      }
+
+      if (!isActive) return;
+      try {
+        await initCatManager(serialPort);
+        if (isActive) {
+          startPolling();
+        }
+      } catch (err: any) {
+        if (isActive) {
+          setCatTestResult("Auto-init error: " + err.message);
+        }
+      }
+    };
+
+    init();
 
     return () => {
+      isActive = false;
       if (interval) clearInterval(interval);
+      if (catRef.current) {
+        const oldCat = catRef.current;
+        catRef.current = null;
+        oldCat.disconnect().catch(err => console.error("Error disconnecting on cleanup:", err));
+      }
     };
   }, [serialPort, catMode, catBaudRate, icomAddress]);
 
@@ -240,8 +299,14 @@ export default function App() {
         return;
       }
       const port = await (navigator as any).serial.requestPort();
+      
+      // Cleanly disconnect old port before switching to a new selected port
+      if (catRef.current) {
+        await catRef.current.disconnect().catch(() => {});
+        catRef.current = null;
+      }
+
       setSerialPort(port);
-      catRef.current = null; // Forces re-init in the polling effect
       setCatTestResult("Port selected successfully. Ready to test.");
     } catch (e: any) {
       console.error(e);
@@ -285,10 +350,46 @@ export default function App() {
   const [targetCall, setTargetCall] = useState('');
   const [txEnabled, setTxEnabled] = useState(false);
 
+  // FSM State Machine Integration
+  const [autoSequence, setAutoSequence] = useState<boolean>(() => {
+    const saved = localStorage.getItem('ft8_autoSequence');
+    return saved !== null ? saved === 'true' : true;
+  });
+  const [fsmState, setFsmState] = useState<string>('IDLE');
+  const [fsmQueueLength, setFsmQueueLength] = useState<number>(0);
+  const fsmRef = useRef<FT8FSM | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem('ft8_autoSequence', String(autoSequence));
+  }, [autoSequence]);
+
+  const txFreqRef = useRef<number>(txFreq);
+  useEffect(() => {
+    txFreqRef.current = txFreq;
+  }, [txFreq]);
+
+  // Synchronize serial CAT PTT keying precisely with the isTransmitting state
+  useEffect(() => {
+    const currentCat = catRef.current;
+    if (currentCat && catMode !== 'manual') {
+      console.log(`[CAT PTT] Setting transceiver PTT state: ${isTransmitting}`);
+      currentCat.setTx(isTransmitting).catch((err: any) => {
+        console.error("CAT setTx PTT error:", err);
+      });
+    }
+    return () => {
+      if (currentCat && catMode !== 'manual') {
+        console.log(`[CAT PTT] Safe RX cleanup active`);
+        currentCat.setTx(false).catch(() => {});
+      }
+    };
+  }, [isTransmitting, catMode]);
+
   // Refs for Worker Access
   const myCallRef = useRef<string>(myCall);
   const targetCallRef = useRef<string>('');
   const txPeriodRef = useRef<number>(txPeriod);
+  const autoSequenceRef = useRef<boolean>(autoSequence);
   
   useEffect(() => {
     myCallRef.current = myCall;
@@ -301,6 +402,10 @@ export default function App() {
   useEffect(() => {
     txPeriodRef.current = txPeriod;
   }, [txPeriod]);
+
+  useEffect(() => {
+    autoSequenceRef.current = autoSequence;
+  }, [autoSequence]);
 
   // Core References
 
@@ -389,47 +494,53 @@ export default function App() {
                     isDivider: true
                 };
                 const newLog = [divider, ...e.data.payload, ...prev];
-                return newLog.slice(0, 100); 
+                
+                // Keep only the last 4 periods (i.e., up to 4 dividers)
+                let dividerCount = 0;
+                const filteredLog: FT8DecodedMessage[] = [];
+                for (const item of newLog) {
+                    if (item.isDivider) {
+                        dividerCount++;
+                    }
+                    if (dividerCount > 4) {
+                        break;
+                    }
+                    filteredLog.push(item);
+                }
+                return filteredLog;
             });
             
-            // Route to QSO Log based on rules
-            const incomingQsoMessages = e.data.payload.filter((msg: FT8DecodedMessage) => {
-                const myCall = myCallRef.current;
-                const targetCall = targetCallRef.current;
-                
-                const parts = msg.message.trim().split(/\s+/);
-                
-                if (myCall && msg.message.includes(myCall)) return true;
-                
-                if (targetCall) {
-                    // Normalize parts to remove hashed call brackets like <W1AW> if present
-                    const cleanParts = parts.map(p => p.replace(/[<>]/g, ''));
+            if (autoSequenceRef.current && fsmRef.current) {
+                fsmRef.current.onPeriodDecodeReady(e.data.payload);
+            } else {
+                // Route to QSO Log based on rules
+                const incomingQsoMessages = e.data.payload.filter((msg: FT8DecodedMessage) => {
+                    const myCall = myCallRef.current;
+                    const targetCall = targetCallRef.current;
                     
-                    // Check if target is the transmitter (Source)
-                    if (cleanParts.length >= 2 && cleanParts[1] === targetCall) return true;
-                    // CQ/QRZ with modifier format: CQ DX W1AW FN34
-                    if (cleanParts.length >= 3 && (cleanParts[0] === 'CQ' || cleanParts[0] === 'QRZ') && cleanParts[2] === targetCall) return true;
-                }
+                    const parts = msg.message.trim().split(/\s+/);
+                    
+                    if (myCall && msg.message.includes(myCall)) return true;
+                    
+                    if (targetCall) {
+                        // Normalize parts to remove hashed call brackets like <W1AW> if present
+                        const cleanParts = parts.map(p => p.replace(/[<>]/g, ''));
+                        
+                        // Check if target is the transmitter (Source)
+                        if (cleanParts.length >= 2 && cleanParts[1] === targetCall) return true;
+                        // CQ/QRZ with modifier format: CQ DX W1AW FN34
+                        if (cleanParts.length >= 3 && (cleanParts[0] === 'CQ' || cleanParts[0] === 'QRZ') && cleanParts[2] === targetCall) return true;
+                    }
+                    
+                    return false;
+                }).map((msg: FT8DecodedMessage) => ({ ...msg, message: "<- " + msg.message, isIncoming: true }));
                 
-                return false;
-            }).map((msg: FT8DecodedMessage) => ({ ...msg, message: "<- " + msg.message, isIncoming: true }));
-            
-            if (incomingQsoMessages.length > 0) {
-                setQsoLog(prev => {
-                    const timeString = incomingQsoMessages[0].time;
-                    const formattedTime = timeString.length === 6 
-                        ? `${timeString.substring(0,2)}:${timeString.substring(2,4)}:${timeString.substring(4,6)}` 
-                        : timeString;
-                    const divider: FT8DecodedMessage = {
-                        time: timeString,
-                        snr: 0,
-                        freq: 0,
-                        message: `-------- ${formattedTime} UTC --------`,
-                        isDivider: true
-                    };
-                    const newLog = [divider, ...incomingQsoMessages.reverse(), ...prev];
-                    return newLog.slice(0, 100);
-                });
+                if (incomingQsoMessages.length > 0) {
+                    setQsoLog(prev => {
+                        const newLog = [...incomingQsoMessages.reverse(), ...prev];
+                        return newLog.slice(0, 100);
+                    });
+                }
             }
         }
       } else if (e.data.type === 'ERROR') {
@@ -654,7 +765,7 @@ export default function App() {
   };
 
   // TX Orchestrator
-  const transmitMessage = async (message: string) => {
+  const transmitMessage = useCallback(async (message: string) => {
     if (!audioCtxRef.current || isTransmitting || isTxQueued || !txEnabled) return;
     
     // Guarantee audio is alive before queuing
@@ -664,7 +775,66 @@ export default function App() {
     
     queuedTxMessageRef.current = message;
     setIsTxQueued(true);
-  };
+  }, [isTransmitting, isTxQueued, txEnabled]);
+
+  // Sync FSM parameters
+  useEffect(() => {
+    if (!fsmRef.current) {
+      const fsm = new FT8FSM({
+        myCall,
+        myGrid,
+        myPeriod: txPeriod,
+        maxRetries,
+        finalMessageMode,
+        isTxEnabled: txEnabled,
+      });
+
+      fsm.onStateChange = (state, target, queue) => {
+        setFsmState(state);
+        setFsmQueueLength(queue.length);
+        setTargetCall(target || '');
+      };
+
+      fsm.onTransmit = (msg) => {
+        // Direct queue setting to bypass stale closures
+        queuedTxMessageRef.current = msg;
+        setIsTxQueued(true);
+      };
+
+      fsm.onAppendQsoLog = (msg, isTx, isDivider) => {
+        setQsoLog(prev => {
+          const now = new Date();
+          const nowString = now.toISOString().substring(11, 19).replace(/:/g, '');
+          const item: FT8DecodedMessage = {
+            time: nowString,
+            snr: isTx ? 0 : -10,
+            freq: txFreqRef.current,
+            message: msg,
+            isTx,
+            isDivider
+          };
+          return [item, ...prev].slice(0, 100);
+        });
+      };
+
+      fsmRef.current = fsm;
+      setFsmState('IDLE');
+    } else {
+      fsmRef.current.myCall = myCall;
+      fsmRef.current.myGrid = myGrid;
+      fsmRef.current.myPeriod = txPeriod;
+      fsmRef.current.maxRetries = maxRetries;
+      fsmRef.current.finalMessageMode = finalMessageMode;
+      fsmRef.current.isTxEnabled = txEnabled;
+    }
+  }, [myCall, myGrid, txPeriod, maxRetries, finalMessageMode, txEnabled]);
+
+  // Auto-reset state machine if PTT is disabled
+  useEffect(() => {
+    if (!txEnabled && fsmRef.current) {
+      fsmRef.current.resetToIdle();
+    }
+  }, [txEnabled]);
 
   // Sync Interval Management & Animation Frame
   useEffect(() => {
@@ -692,6 +862,11 @@ export default function App() {
       if (currentPeriod !== periodState.lastPeriod && periodState.lastPeriod !== -1) {
         periodState.lastPeriod = currentPeriod;
         periodState.decodedThisPeriod = false;
+
+        // Drive FSM at slot transition
+        if (autoSequence && fsmRef.current) {
+          fsmRef.current.onPeriodStart(seconds);
+        }
         
         // Start TX exactly at 0.0s if queued and matches selected period
         if (queuedTxMessageRef.current && txEnabled && currentPeriod % 2 === txPeriodRef.current) {
@@ -700,17 +875,19 @@ export default function App() {
             setIsTxQueued(false);
             setIsTransmitting(true);
             
-            // Add to QSO Log
-            setQsoLog(prev => {
-                const nowString = now.toISOString().substring(11, 19).replace(/:/g, '');
-                return [{
-                    time: nowString,
-                    snr: 0,
-                    freq: txFreq,
-                    message: "-> " + message,
-                    isTx: true
-                }, ...prev].slice(0, 100);
-            });
+            // Add to QSO Log (only if not handled automatically by FSM)
+            if (!autoSequence) {
+                setQsoLog(prev => {
+                    const nowString = now.toISOString().substring(11, 19).replace(/:/g, '');
+                    return [{
+                        time: nowString,
+                        snr: 0,
+                        freq: txFreq,
+                        message: "-> " + message,
+                        isTx: true
+                    }, ...prev].slice(0, 100);
+                });
+            }
             
             const ctx = audioCtxRef.current;
             if (ctx && ctx.state !== 'suspended') {
@@ -792,7 +969,7 @@ export default function App() {
     return () => {
         cancelAnimationFrame(animationFrameId);
     };
-  }, [audioActive, drawWaterfall, decodeDepth, txEnabled, txFreq, selectedOutputDeviceId]);
+  }, [audioActive, drawWaterfall, decodeDepth, txEnabled, txFreq, selectedOutputDeviceId, autoSequence]);
 
   const handleWaterfallClick = (e: React.MouseEvent<HTMLElement, MouseEvent>) => {
     if (!canvasRef.current) return;
@@ -926,8 +1103,8 @@ export default function App() {
         <section className="lg:col-span-5 flex flex-col gap-3 min-h-0">
           
           {/* Band Activity (Global Log) */}
-          <div className="bg-panel border border-border-subtle rounded-lg flex flex-col min-h-[250px] flex-1">
-            <div className="bg-header border-b border-border-subtle px-3 py-2 flex justify-between items-center rounded-t-lg">
+          <div className="bg-panel border border-border-subtle rounded-lg flex flex-col h-[300px] max-h-[300px] shrink-0 overflow-hidden">
+            <div className="bg-header border-b border-border-subtle px-3 py-2 flex justify-between items-center rounded-t-lg shrink-0">
               <h3 className="text-[11px] font-bold text-text-muted tracking-widest uppercase flex items-center gap-2">
                 <Activity size={14} className="text-green-600 dark:text-[#4caf50]"/> 
                 Band Activity
@@ -937,6 +1114,13 @@ export default function App() {
                   </span>
                 )}
               </h3>
+              <button
+                onClick={() => setRxLog([])}
+                className="text-[10px] font-mono font-bold uppercase bg-red-950/80 text-red-100 hover:bg-red-900 border border-red-700 hover:border-red-500 px-2.5 py-1 rounded transition-all shrink-0 shadow-sm"
+                title="Clear Band Activity Log"
+              >
+                Clear
+              </button>
             </div>
             <div className="flex-1 font-mono text-[11px] overflow-hidden p-2 flex flex-col">
               <div className="grid grid-cols-[55px_40px_60px_1fr] gap-2 py-1 text-text-muted border-b border-border-subtle mb-2 uppercase text-[9px] shrink-0">
@@ -960,9 +1144,23 @@ export default function App() {
                   <div 
                     key={i}
                     onClick={() => {
-                      const parts = log.message.split(' ');
-                      if(parts[0] === 'CQ') setTargetCall(parts[1]); 
-                      else setTargetCall(parts[0]);
+                      const callsign = extractTransmitterCallsign(log.message);
+                      if (callsign) {
+                        setTargetCall(callsign);
+                        if (fsmRef.current) {
+                          fsmRef.current.targetCall = callsign;
+                          const gridMatch = log.message.match(/\b[A-Z]{2}[0-9]{2}\b/);
+                          if (gridMatch) {
+                            fsmRef.current.targetGrid = gridMatch[0];
+                          } else {
+                            fsmRef.current.targetGrid = null;
+                          }
+                          if (autoSequence) {
+                            fsmRef.current.updateState('REPLY_SENDING', callsign);
+                            setTxEnabled(true);
+                          }
+                        }
+                      }
                       
                       // Auto-set TX period to the OPPOSITE of the caller's period
                       const seconds = parseInt(log.time.substring(4, 6), 10);
@@ -983,12 +1181,19 @@ export default function App() {
           </div>
 
           {/* QSO Window (Targeted Log) */}
-          <div className="bg-qso border border-border-subtle rounded-lg flex flex-col min-h-[250px] flex-1">
-            <div className="bg-header border-b border-border-subtle px-3 py-2 flex justify-between items-center rounded-t-lg">
+          <div className="bg-qso border border-border-subtle rounded-lg flex flex-col h-[250px] max-h-[250px] shrink-0 overflow-hidden">
+            <div className="bg-header border-b border-border-subtle px-3 py-2 flex justify-between items-center rounded-t-lg shrink-0">
               <h3 className="text-[11px] font-bold text-text-muted tracking-widest uppercase flex items-center gap-2">
                 <Activity size={14} className="text-green-600 dark:text-[#4caf50]"/> 
                 Active QSO
               </h3>
+              <button
+                onClick={() => setQsoLog([])}
+                className="text-[10px] font-mono font-bold uppercase bg-red-950/80 text-red-100 hover:bg-red-900 border border-red-700 hover:border-red-500 px-2.5 py-1 rounded transition-all shrink-0 shadow-sm"
+                title="Clear Active QSO Log"
+              >
+                Clear
+              </button>
             </div>
             <div className="flex-1 font-mono text-[11px] overflow-hidden p-2 flex flex-col">
               <div className="grid grid-cols-[55px_40px_60px_1fr] gap-2 py-1 text-text-muted border-b border-border-subtle mb-2 uppercase text-[9px] shrink-0">
@@ -1004,21 +1209,35 @@ export default function App() {
                     </div>
                 )}
                 {qsoLog.map((log, i) => {
+                  if (log.isDivider) return null;
+                  
                   let textClass = "text-text-main font-bold";
                   if (log.isTx) textClass = "text-sky-300 font-bold";
                   else if (log.isIncoming) textClass = "text-green-400 font-bold";
                   
-                  return log.isDivider ? (
-                    <div key={i} className="flex items-center justify-center py-2 opacity-50">
-                       <span className="text-[9px] font-mono tracking-widest text-text-muted">{log.message}</span>
-                    </div>
-                  ) : (
+                  return (
                   <div 
                     key={i}
                     onClick={() => {
-                      const parts = log.message.split(' ');
-                      if(parts[0] === 'CQ') setTargetCall(parts[1]); 
-                      else if (!log.isTx) setTargetCall(parts[0]);
+                      if (!log.isTx) {
+                        const callsign = extractTransmitterCallsign(log.message);
+                        if (callsign) {
+                          setTargetCall(callsign);
+                          if (fsmRef.current) {
+                            fsmRef.current.targetCall = callsign;
+                            const gridMatch = log.message.match(/\b[A-Z]{2}[0-9]{2}\b/);
+                            if (gridMatch) {
+                              fsmRef.current.targetGrid = gridMatch[0];
+                            } else {
+                              fsmRef.current.targetGrid = null;
+                            }
+                            if (autoSequence) {
+                              fsmRef.current.updateState('REPLY_SENDING', callsign);
+                              setTxEnabled(true);
+                            }
+                          }
+                        }
+                      }
 
                       // If incoming message, set TX period to OPPOSITE of caller's period
                       if (!log.isTx && log.time && log.time.length >= 6) {
@@ -1034,7 +1253,7 @@ export default function App() {
                     <span className="text-blue-400">{log.freq}Hz</span>
                     <span className={`group-hover:text-text-highlight ${textClass}`}>{log.message}</span>
                   </div>
-                  )
+                  );
                 })}
               </div>
             </div>
@@ -1103,16 +1322,31 @@ export default function App() {
 
           <div className="w-full lg:w-auto flex-1 grid grid-cols-2 gap-2 px-0 lg:px-4">
              <button 
-                onClick={() => transmitMessage(`CQ ${myCall} ${myGrid}`)}
-                disabled={!txEnabled || isTransmitting || isTxQueued}
+                onClick={() => {
+                  if (autoSequence && fsmRef.current) {
+                    fsmRef.current.updateState('CQ_SENDING');
+                    setTxEnabled(true);
+                  } else {
+                    transmitMessage(`CQ ${myCall} ${myGrid.substring(0, 4)}`);
+                  }
+                }}
+                disabled={(!autoSequence && !txEnabled) || isTransmitting || isTxQueued}
                 className="h-10 bg-btn border border-border-input hover:bg-btn-hover disabled:opacity-50 disabled:hover:bg-btn text-[10px] font-bold rounded uppercase tracking-wider transition-colors flex items-center justify-center gap-1"
               >
                  CQ {myCall}
              </button>
              
              <button 
-                onClick={() => transmitMessage(`${targetCall} ${myCall} ${myGrid}`)}
-                disabled={!txEnabled || !targetCall || isTransmitting || isTxQueued}
+                onClick={() => {
+                  if (autoSequence && fsmRef.current) {
+                    fsmRef.current.targetCall = targetCall;
+                    fsmRef.current.updateState('REPLY_SENDING', targetCall);
+                    setTxEnabled(true);
+                  } else {
+                    transmitMessage(`${targetCall} ${myCall} ${myGrid.substring(0, 4)}`);
+                  }
+                }}
+                disabled={(!autoSequence && !txEnabled) || !targetCall || isTransmitting || isTxQueued}
                 className="h-10 bg-btn border border-border-input hover:bg-btn-hover disabled:opacity-50 disabled:hover:bg-btn text-[10px] font-bold rounded uppercase tracking-wider transition-colors flex items-center justify-center gap-1"
               >
                  Ans {targetCall || '...'}
@@ -1125,21 +1359,47 @@ export default function App() {
              )}
           </div>
 
-          <div className="w-full lg:w-auto flex flex-col items-center justify-center lg:pl-6 lg:border-l border-border-subtle mt-4 lg:mt-0 shrink-0">
-            <button 
-               onClick={() => setTxEnabled(!txEnabled)}
-               className={`w-full lg:w-32 h-16 border rounded flex flex-col items-center justify-center gap-1 group transition-all active:scale-95 ${
-                 txEnabled 
-                   ? 'bg-[#2a0e0e] border-[#4a1a1a] hover:bg-[#3a1212] text-[#ff4444]'
-                   : 'bg-btn border-border-input hover:bg-btn-hover text-text-muted'
-               }`}
-            >
-               <span className="text-[10px] font-bold tracking-widest uppercase">{txEnabled ? 'TX Enabled' : 'Enable TX'}</span>
-               <div className={`w-8 h-2 rounded-full relative ${txEnabled ? 'bg-[#4a1a1a]' : 'bg-panel'}`}>
-                 <div className={`absolute left-0 top-0 w-3 h-2 rounded-full transition-all ${txEnabled ? 'bg-[#ff4444] shadow-[0_0_8px_#ff4444] translate-x-5' : 'bg-[#3a3d45]'}`}></div>
-               </div>
-            </button>
-            <p className="text-[8px] text-text-muted mt-2 italic text-center w-full lg:w-32">Awaiting VOX sync at :00... :45</p>
+          <div className="w-full lg:w-auto flex flex-col sm:flex-row gap-3 items-center justify-center lg:pl-6 lg:border-l border-border-subtle mt-4 lg:mt-0 shrink-0">
+            {/* Auto Sequence Toggle and FSM State Indicator */}
+            <div className="flex flex-col items-center justify-center">
+              <button
+                 onClick={() => setAutoSequence(!autoSequence)}
+                 className={`w-full lg:w-32 h-16 border rounded flex flex-col items-center justify-center gap-1 group transition-all active:scale-95 ${
+                   autoSequence 
+                     ? 'bg-[#0f2a18] border-[#184525] hover:bg-[#153a21] text-green-400 font-bold' 
+                     : 'bg-btn border-border-input hover:bg-btn-hover text-text-muted'
+                 }`}
+              >
+                 <span className="text-[9px] font-bold tracking-widest uppercase">AUTO SEQUENCE</span>
+                 <span className="text-[10px] font-mono uppercase bg-black/40 px-2 py-0.5 rounded text-sky-400 font-bold tracking-wider">
+                   {autoSequence ? fsmState : "OFF"}
+                 </span>
+                 {autoSequence && fsmQueueLength > 0 && (
+                   <span className="text-[8px] text-zinc-500 font-mono">Q: {fsmQueueLength} pending</span>
+                 )}
+              </button>
+              <p className="text-[8px] text-text-muted mt-2 italic text-center w-full lg:w-32">
+                {autoSequence ? `FSM: ${fsmState}` : "Manual operations enabled"}
+              </p>
+            </div>
+
+            {/* Enable TX PTT Trigger */}
+            <div className="flex flex-col items-center justify-center">
+              <button 
+                 onClick={() => setTxEnabled(!txEnabled)}
+                 className={`w-full lg:w-32 h-16 border rounded flex flex-col items-center justify-center gap-1 group transition-all active:scale-95 ${
+                   txEnabled 
+                     ? 'bg-[#2a0e0e] border-[#4a1a1a] hover:bg-[#3a1212] text-[#ff4444]'
+                     : 'bg-btn border-border-input hover:bg-btn-hover text-text-muted'
+                }`}
+              >
+                 <span className="text-[10px] font-bold tracking-widest uppercase">{txEnabled ? 'TX Enabled' : 'Enable TX'}</span>
+                 <div className={`w-8 h-2 rounded-full relative ${txEnabled ? 'bg-[#4a1a1a]' : 'bg-panel'}`}>
+                   <div className={`absolute left-0 top-0 w-3 h-2 rounded-full transition-all ${txEnabled ? 'bg-[#ff4444] shadow-[0_0_8px_#ff4444] translate-x-5' : 'bg-[#3a3d45]'}`}></div>
+                 </div>
+              </button>
+              <p className="text-[8px] text-text-muted mt-2 italic text-center w-full lg:w-32">Awaiting VOX sync at :00... :45</p>
+            </div>
           </div>
         </div>
       </footer>

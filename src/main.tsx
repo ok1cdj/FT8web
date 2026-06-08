@@ -9,10 +9,22 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js')
       .then((registration) => {
         console.log('[PWA] Service Worker registered in scope:', registration.scope);
+        // Force update check on page load to see if a newer sw.js is available
+        registration.update();
       })
       .catch((error) => {
         console.error('[PWA] Service Worker registration failed:', error);
       });
+  });
+
+  // Automatically refresh the page when a new service worker takes over control
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!refreshing) {
+      refreshing = true;
+      console.log('[PWA] New Service Worker active, reloading for latest updates...');
+      window.location.reload();
+    }
   });
 }
 
