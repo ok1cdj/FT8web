@@ -8,6 +8,7 @@ export interface FT8DecodedMessage {
   snr: number;
   freq: number;
   message: string;
+  isDivider?: boolean;
 }
 
 export default function App() {
@@ -40,6 +41,8 @@ export default function App() {
       return saved ? Number(saved) : 2;
   });
 
+  const [decodeStats, setDecodeStats] = useState<{ count: number, durationMs: number } | null>(null);
+
   useEffect(() => {
       localStorage.setItem('ft8_myCall', myCall);
       localStorage.setItem('ft8_myGrid', myGrid);
@@ -52,6 +55,7 @@ export default function App() {
   
   // App State
   const [rxLog, setRxLog] = useState<FT8DecodedMessage[]>([]);
+  const [qsoLog, setQsoLog] = useState<FT8DecodedMessage[]>([]);
   const [isTransmitting, setIsTransmitting] = useState(false);
   const [isTxQueued, setIsTxQueued] = useState(false);
   
@@ -59,7 +63,20 @@ export default function App() {
   const [targetCall, setTargetCall] = useState('');
   const [txEnabled, setTxEnabled] = useState(false);
 
+  // Refs for Worker Access
+  const myCallRef = useRef<string>(myCall);
+  const targetCallRef = useRef<string>('');
+  
+  useEffect(() => {
+    myCallRef.current = myCall;
+  }, [myCall]);
+  
+  useEffect(() => {
+    targetCallRef.current = targetCall;
+  }, [targetCall]);
+
   // Core References
+
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const captureNodeRef = useRef<AudioWorkletNode | null>(null);
@@ -127,11 +144,60 @@ export default function App() {
 
     const worker = new Worker(new URL('./ft8-worker.ts', import.meta.url), { type: 'module' });
     worker.onmessage = (e) => {
-      if (e.data.type === 'DECODED' && e.data.payload.length > 0) {
-        setRxLog(prev => {
-          const newLog = [...e.data.payload, ...prev];
-          return newLog.slice(0, 100); 
-        });
+      if (e.data.type === 'DECODED') {
+        if (e.data.durationMs !== undefined) {
+            setDecodeStats({ count: e.data.count, durationMs: e.data.durationMs });
+        }
+        if (e.data.payload.length > 0) {
+            setRxLog(prev => {
+                const timeString = e.data.payload[0].time;
+                const formattedTime = timeString.length === 6 
+                    ? `${timeString.substring(0,2)}:${timeString.substring(2,4)}:${timeString.substring(4,6)}` 
+                    : timeString;
+                const divider: FT8DecodedMessage = {
+                    time: timeString,
+                    snr: 0,
+                    freq: 0,
+                    message: `-------- ${formattedTime} UTC --------`,
+                    isDivider: true
+                };
+                const newLog = [divider, ...e.data.payload, ...prev];
+                return newLog.slice(0, 100); 
+            });
+            
+            // Route to QSO Log based on rules
+            const incomingQsoMessages = e.data.payload.filter((msg: FT8DecodedMessage) => {
+                const myCall = myCallRef.current;
+                const targetCall = targetCallRef.current;
+                
+                // Condition A: Both myCall and targetCall present
+                if (myCall && targetCall && msg.message.includes(myCall) && msg.message.includes(targetCall)) return true;
+                
+                // Condition B: message starts with myCall
+                const parts = msg.message.trim().split(/\s+/);
+                if (parts[0] === myCall) return true;
+                
+                return false;
+            }).map((msg: FT8DecodedMessage) => ({ ...msg, message: "<- " + msg.message, isIncoming: true }));
+            
+            if (incomingQsoMessages.length > 0) {
+                setQsoLog(prev => {
+                    const timeString = incomingQsoMessages[0].time;
+                    const formattedTime = timeString.length === 6 
+                        ? `${timeString.substring(0,2)}:${timeString.substring(2,4)}:${timeString.substring(4,6)}` 
+                        : timeString;
+                    const divider: FT8DecodedMessage = {
+                        time: timeString,
+                        snr: 0,
+                        freq: 0,
+                        message: `-------- ${formattedTime} UTC --------`,
+                        isDivider: true
+                    };
+                    const newLog = [divider, ...incomingQsoMessages.reverse(), ...prev];
+                    return newLog.slice(0, 100);
+                });
+            }
+        }
       } else if (e.data.type === 'ERROR') {
         console.error("FT8 Decode Worker Error:", e.data.error);
       }
@@ -400,6 +466,18 @@ export default function App() {
             setIsTxQueued(false);
             setIsTransmitting(true);
             
+            // Add to QSO Log
+            setQsoLog(prev => {
+                const nowString = now.toISOString().substring(11, 19).replace(/:/g, '');
+                return [{
+                    time: nowString,
+                    snr: 0,
+                    freq: txFreq,
+                    message: "-> " + message,
+                    isTx: true
+                }, ...prev].slice(0, 100);
+            });
+            
             const ctx = audioCtxRef.current;
             if (ctx && ctx.state !== 'suspended') {
                 if (typeof (ctx as any).setSinkId === 'function') {
@@ -455,7 +533,11 @@ export default function App() {
         
         if (audioActive && audioCtxRef.current && audioData.length > 0) {
             if (workerRef.current) {
-                const nowString = now.toISOString().substring(11, 19).replace(/:/g, '');
+                const periodStartSeconds = Math.floor(now.getUTCSeconds() / 15) * 15;
+                const periodStart = new Date(now.getTime());
+                periodStart.setUTCSeconds(periodStartSeconds, 0);
+                const nowString = periodStart.toISOString().substring(11, 19).replace(/:/g, '');
+                
                 workerRef.current.postMessage({
                     audioData,
                     sampleRate: audioCtxRef.current.sampleRate,
@@ -552,49 +634,115 @@ export default function App() {
       {/* Main Working Environment */}
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-[400px]">
         
-        {/* Left pane: Decoded Stream */}
-        <section className="lg:col-span-5 bg-[#151619] border border-[#2a2c31] rounded-lg flex flex-col min-h-0">
-          <div className="bg-[#1c1e23] border-b border-[#2a2c31] px-3 py-2 flex justify-between items-center rounded-t-lg">
-            <h3 className="text-[11px] font-bold text-[#8e9299] tracking-widest uppercase flex items-center gap-2">
-              <Activity size={14} className="text-[#4caf50]"/> Decoded Messages
-            </h3>
-            <span className="text-[9px] text-green-500 bg-green-500/10 px-1.5 py-0.5 rounded border border-green-500/20">RX ON</span>
-          </div>
-          <div className="flex-1 font-mono text-[11px] overflow-hidden p-2 flex flex-col">
-            <div className="grid grid-cols-[55px_40px_60px_1fr] gap-2 py-1 text-[#8e9299] border-b border-[#2a2c31] mb-2 uppercase text-[9px] shrink-0">
-              <div>Time</div>
-              <div>SNR</div>
-              <div>Freq</div>
-              <div>Message</div>
+        {/* Left pane: Logs */}
+        <section className="lg:col-span-5 flex flex-col gap-3 min-h-0">
+          
+          {/* Band Activity (Global Log) */}
+          <div className="bg-[#151619] border border-[#2a2c31] rounded-lg flex flex-col min-h-[250px] flex-1">
+            <div className="bg-[#1c1e23] border-b border-[#2a2c31] px-3 py-2 flex justify-between items-center rounded-t-lg">
+              <h3 className="text-[11px] font-bold text-[#8e9299] tracking-widest uppercase flex items-center gap-2">
+                <Activity size={14} className="text-[#4caf50]"/> 
+                Band Activity
+                {decodeStats && (
+                  <span className={`normal-case tracking-normal ${decodeStats.durationMs > 1500 ? "text-orange-400" : "text-zinc-500"}`}>
+                    ({decodeStats.count} stations in {decodeStats.durationMs}ms)
+                  </span>
+                )}
+              </h3>
             </div>
-            <div className="flex-1 overflow-y-auto space-y-0.5 pr-1">
-              {rxLog.length === 0 && (
-                  <div className="text-[#8e9299] flex items-center justify-center h-full opacity-50 p-6 text-center text-xs">
-                      Awaiting FT8 signals...<br/>(Audio decoded every 15s synced period)
+            <div className="flex-1 font-mono text-[11px] overflow-hidden p-2 flex flex-col">
+              <div className="grid grid-cols-[55px_40px_60px_1fr] gap-2 py-1 text-[#8e9299] border-b border-[#2a2c31] mb-2 uppercase text-[9px] shrink-0">
+                <div>Time</div>
+                <div>SNR</div>
+                <div>Freq</div>
+                <div>Message</div>
+              </div>
+              <div className="flex-1 overflow-y-auto space-y-0.5 pr-1">
+                {rxLog.length === 0 && (
+                    <div className="text-[#8e9299] flex items-center justify-center h-full opacity-50 p-6 text-center text-xs">
+                        Awaiting FT8 signals...<br/>(Audio decoded every 15s synced period)
+                    </div>
+                )}
+                {rxLog.map((log, i) => (
+                  log.isDivider ? (
+                    <div key={i} className="flex items-center justify-center py-2 opacity-50">
+                       <span className="text-[9px] font-mono tracking-widest text-[#8e9299]">{log.message}</span>
+                    </div>
+                  ) : (
+                  <div 
+                    key={i}
+                    onClick={() => {
+                      const parts = log.message.split(' ');
+                      if(parts[0] === 'CQ') setTargetCall(parts[1]); 
+                      else setTargetCall(parts[0]);
+                    }}
+                    className="grid grid-cols-[55px_40px_60px_1fr] gap-2 hover:bg-[#23252a] cursor-pointer p-1 rounded transition-colors group text-[11px] items-center"
+                  >
+                    <span className="text-zinc-500">{log.time}</span>
+                    <span className={log.snr > -10 ? 'text-green-400' : 'text-red-400'}>{log.snr}</span>
+                    <span className="text-blue-400">{log.freq}Hz</span>
+                    <span className="text-[#e0e0e0] group-hover:text-white font-bold">{log.message}</span>
                   </div>
-              )}
-              {rxLog.map((log, i) => (
-                <div 
-                  key={i}
-                  onClick={() => {
-                    const parts = log.message.split(' ');
-                    if(parts[0] === 'CQ') setTargetCall(parts[1]); 
-                    else setTargetCall(parts[0]);
-                  }}
-                  className="grid grid-cols-[55px_40px_60px_1fr] gap-2 hover:bg-[#23252a] cursor-pointer p-1 rounded transition-colors group text-[11px] items-center"
-                >
-                  <span className="text-zinc-500">{log.time}</span>
-                  <span className={log.snr > -10 ? 'text-green-400' : 'text-red-400'}>{log.snr}</span>
-                  <span className="text-blue-400">{log.freq}Hz</span>
-                  <span className="text-[#e0e0e0] group-hover:text-white font-bold">{log.message}</span>
-                </div>
-              ))}
+                  )
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* QSO Window (Targeted Log) */}
+          <div className="bg-[#101010] border border-[#2a2c31] rounded-lg flex flex-col min-h-[250px] flex-1">
+            <div className="bg-[#1c1e23] border-b border-[#2a2c31] px-3 py-2 flex justify-between items-center rounded-t-lg">
+              <h3 className="text-[11px] font-bold text-[#8e9299] tracking-widest uppercase flex items-center gap-2">
+                <Activity size={14} className="text-[#4caf50]"/> 
+                Active QSO
+              </h3>
+            </div>
+            <div className="flex-1 font-mono text-[11px] overflow-hidden p-2 flex flex-col">
+              <div className="grid grid-cols-[55px_40px_60px_1fr] gap-2 py-1 text-[#8e9299] border-b border-[#2a2c31] mb-2 uppercase text-[9px] shrink-0">
+                <div>Time</div>
+                <div>SNR</div>
+                <div>Freq</div>
+                <div>Message</div>
+              </div>
+              <div className="flex-1 overflow-y-auto space-y-0.5 pr-1">
+                {qsoLog.length === 0 && (
+                    <div className="text-[#8e9299] flex items-center justify-center h-full opacity-50 p-6 text-center text-xs">
+                        No active QSOs...
+                    </div>
+                )}
+                {qsoLog.map((log, i) => {
+                  let textClass = "text-[#e0e0e0] font-bold";
+                  if (log.isTx) textClass = "text-sky-300 font-bold";
+                  else if (log.isIncoming) textClass = "text-green-400 font-bold";
+                  
+                  return log.isDivider ? (
+                    <div key={i} className="flex items-center justify-center py-2 opacity-50">
+                       <span className="text-[9px] font-mono tracking-widest text-[#8e9299]">{log.message}</span>
+                    </div>
+                  ) : (
+                  <div 
+                    key={i}
+                    onClick={() => {
+                      const parts = log.message.split(' ');
+                      if(parts[0] === 'CQ') setTargetCall(parts[1]); 
+                      else if (!log.isTx) setTargetCall(parts[0]);
+                    }}
+                    className="grid grid-cols-[55px_40px_60px_1fr] gap-2 hover:bg-[#23252a] cursor-pointer p-1 rounded transition-colors group text-[11px] items-center"
+                  >
+                    <span className="text-zinc-500">{log.time}</span>
+                    <span className={log.isTx ? 'text-zinc-500' : (log.snr > -10 ? 'text-green-400' : 'text-red-400')}>{log.isTx ? '--' : log.snr}</span>
+                    <span className="text-blue-400">{log.freq}Hz</span>
+                    <span className={`group-hover:text-white ${textClass}`}>{log.message}</span>
+                  </div>
+                  )
+                })}
+              </div>
             </div>
           </div>
         </section>
 
         {/* Right pane: Waterfall DSP */}
-        <section className="lg:col-span-7 bg-[#050505] border border-[#2a2c31] rounded-lg overflow-hidden flex flex-col relative h-[600px]">
+        <section className="lg:col-span-7 bg-[#050505] border border-[#2a2c31] rounded-lg overflow-hidden flex flex-col relative h-[300px] lg:h-auto">
            <div className="absolute top-0 inset-x-0 bg-black/40 backdrop-blur-sm px-3 py-1 border-b border-[#2a2c31] flex justify-between z-10 pointer-events-none">
             <span className="text-[9px] font-mono tracking-tighter text-[#4caf50]">WATERFALL (200 - 3000 Hz)</span>
             <div className="flex gap-4">
@@ -607,7 +755,7 @@ export default function App() {
             <canvas 
                ref={canvasRef}
                width={1024} 
-               height={600} 
+               height={300} 
                className="w-full h-full block cursor-crosshair"
                onClick={handleWaterfallClick}
             />
