@@ -43,6 +43,54 @@ export default function App() {
 
   const [decodeStats, setDecodeStats] = useState<{ count: number, durationMs: number } | null>(null);
 
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    return (localStorage.getItem('ft8_theme') as 'dark' | 'light') || 'dark';
+  });
+
+  const [wakeLockEnabled, setWakeLockEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('ft8_wakelock') === 'true';
+  });
+  
+  useEffect(() => {
+    localStorage.setItem('ft8_theme', theme);
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem('ft8_wakelock', String(wakeLockEnabled));
+    let wakeLock: any = null;
+    let isMounted = true;
+    
+    const requestWakeLock = async () => {
+      try {
+        if ('wakeLock' in navigator && wakeLockEnabled) {
+          wakeLock = await (navigator as any).wakeLock.request('screen');
+        }
+      } catch (err) {
+        console.error('Wake Lock request failed:', err);
+      }
+    };
+
+    if (wakeLockEnabled) {
+      requestWakeLock();
+      
+      const handleVisibilityChange = () => {
+        if (wakeLock !== null && document.visibilityState === 'visible') {
+           requestWakeLock();
+        }
+      };
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      
+      return () => {
+        isMounted = false;
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        if (wakeLock !== null) {
+          wakeLock.release().catch(console.error);
+        }
+      }
+    }
+  }, [wakeLockEnabled]);
+
   useEffect(() => {
       localStorage.setItem('ft8_myCall', myCall);
       localStorage.setItem('ft8_myGrid', myGrid);
@@ -569,28 +617,28 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0d0e10] text-[#e0e0e0] font-sans flex flex-col p-4 select-none">
+    <div className="min-h-screen bg-app text-text-main font-sans flex flex-col p-4 select-none">
       
       {/* Header Pipeline */}
-      <header className="flex flex-wrap items-center justify-between bg-[#151619] border border-[#2a2c31] rounded-lg p-4 mb-3 shadow-lg gap-4">
+      <header className="flex flex-wrap items-center justify-between bg-panel border border-border-subtle rounded-lg p-4 mb-3 shadow-lg gap-4">
         <div className="flex items-center gap-6 flex-wrap">
           <div className="flex flex-col">
-            <span className="text-[10px] uppercase tracking-widest text-[#8e9299] mb-1">System Status</span>
+            <span className="text-[10px] uppercase tracking-widest text-text-muted mb-1">System Status</span>
             <div className="flex gap-2">
               <button 
                 onClick={() => toggleAudio()}
                 className={`px-3 py-1.5 border rounded text-[10px] font-bold transition-all flex items-center gap-2 uppercase tracking-widest ${
                   audioActive 
-                    ? 'bg-[#23252a] border-[#4caf50] text-[#4caf50] hover:border-red-500 hover:text-red-500'
-                    : 'bg-[#23252a] border-[#3a3d45] hover:border-[#4caf50] text-[#8e9299] hover:text-[#4caf50]'
+                    ? 'bg-btn border-[#4caf50] text-green-600 dark:text-[#4caf50] hover:border-red-500 hover:text-red-500'
+                    : 'bg-btn border-border-input hover:border-[#4caf50] text-text-muted hover:text-green-600 dark:text-[#4caf50]'
                 }`}
               >
-                <div className={`w-2 h-2 rounded-full ${audioActive ? 'bg-[#4caf50] shadow-[0_0_8px_#4caf50]' : 'bg-[#2a2c31]'}`}></div>
+                <div className={`w-2 h-2 rounded-full ${audioActive ? 'bg-green-600 dark:bg-[#4caf50] shadow-[0_0_8px_#4caf50]' : 'bg-[#2a2c31]'}`}></div>
                 {audioActive ? "Audio Active" : "Activate Audio"}
               </button>
               <button
                 onClick={() => setShowSettings(true)}
-                className="px-2 border border-[#3a3d45] bg-[#23252a] hover:bg-[#2a2c31] rounded flex items-center justify-center text-[#8e9299] hover:text-[#e0e0e0] transition-colors"
+                className="px-2 border border-border-input bg-btn hover:bg-btn-hover rounded flex items-center justify-center text-text-muted hover:text-text-main transition-colors"
                 title="Settings"
               >
                   <Settings size={14} />
@@ -600,8 +648,8 @@ export default function App() {
 
           {/* VU Meter Payload */}
           <div className="flex flex-col min-w-[140px]">
-            <span className="text-[10px] uppercase tracking-widest text-[#8e9299] mb-1">Input Level (VU)</span>
-            <div className="h-4 bg-black rounded-sm border border-[#2a2c31] relative overflow-hidden">
+            <span className="text-[10px] uppercase tracking-widest text-text-muted mb-1">Input Level (VU)</span>
+            <div className="h-4 bg-black rounded-sm border border-border-subtle relative overflow-hidden">
               <div 
                 className="absolute left-0 top-0 h-full bg-gradient-to-r from-green-500 via-yellow-400 to-red-500 opacity-80 transition-all duration-75 ease-linear"
                 style={{ width: `${audioLevel}%` }}
@@ -614,18 +662,18 @@ export default function App() {
         </div>
 
         <div className="flex flex-col items-center">
-          <span className="text-[10px] uppercase tracking-widest text-[#8e9299] mb-1">FT8 Window (15s Sync)</span>
-          <div className="w-32 md:w-48 h-1.5 bg-black rounded-full border border-[#2a2c31] relative overflow-hidden">
+          <span className="text-[10px] uppercase tracking-widest text-text-muted mb-1">FT8 Window (15s Sync)</span>
+          <div className="w-32 md:w-48 h-1.5 bg-black rounded-full border border-border-subtle relative overflow-hidden">
              <div 
-              className="absolute left-0 top-0 h-full bg-[#4caf50] transition-all duration-75 ease-linear shadow-[0_0_5px_rgba(76,175,80,0.5)]"
+              className="absolute left-0 top-0 h-full bg-green-600 dark:bg-[#4caf50] transition-all duration-75 ease-linear shadow-[0_0_5px_rgba(76,175,80,0.5)]"
               style={{ width: `${windowProgress}%` }}
             />
           </div>
         </div>
 
         <div className="flex flex-col items-end min-w-[120px]">
-          <span className="text-[10px] uppercase tracking-widest text-[#8e9299] block mb-1">Station Clock (UTC)</span>
-          <span className="text-2xl font-mono font-bold text-[#e0e0e0] leading-none">
+          <span className="text-[10px] uppercase tracking-widest text-text-muted block mb-1">Station Clock (UTC)</span>
+          <span className="text-2xl font-mono font-bold text-text-main leading-none">
             {utcTime}
           </span>
         </div>
@@ -638,10 +686,10 @@ export default function App() {
         <section className="lg:col-span-5 flex flex-col gap-3 min-h-0">
           
           {/* Band Activity (Global Log) */}
-          <div className="bg-[#151619] border border-[#2a2c31] rounded-lg flex flex-col min-h-[250px] flex-1">
-            <div className="bg-[#1c1e23] border-b border-[#2a2c31] px-3 py-2 flex justify-between items-center rounded-t-lg">
-              <h3 className="text-[11px] font-bold text-[#8e9299] tracking-widest uppercase flex items-center gap-2">
-                <Activity size={14} className="text-[#4caf50]"/> 
+          <div className="bg-panel border border-border-subtle rounded-lg flex flex-col min-h-[250px] flex-1">
+            <div className="bg-header border-b border-border-subtle px-3 py-2 flex justify-between items-center rounded-t-lg">
+              <h3 className="text-[11px] font-bold text-text-muted tracking-widest uppercase flex items-center gap-2">
+                <Activity size={14} className="text-green-600 dark:text-[#4caf50]"/> 
                 Band Activity
                 {decodeStats && (
                   <span className={`normal-case tracking-normal ${decodeStats.durationMs > 1500 ? "text-orange-400" : "text-zinc-500"}`}>
@@ -651,7 +699,7 @@ export default function App() {
               </h3>
             </div>
             <div className="flex-1 font-mono text-[11px] overflow-hidden p-2 flex flex-col">
-              <div className="grid grid-cols-[55px_40px_60px_1fr] gap-2 py-1 text-[#8e9299] border-b border-[#2a2c31] mb-2 uppercase text-[9px] shrink-0">
+              <div className="grid grid-cols-[55px_40px_60px_1fr] gap-2 py-1 text-text-muted border-b border-border-subtle mb-2 uppercase text-[9px] shrink-0">
                 <div>Time</div>
                 <div>SNR</div>
                 <div>Freq</div>
@@ -659,14 +707,14 @@ export default function App() {
               </div>
               <div className="flex-1 overflow-y-auto space-y-0.5 pr-1">
                 {rxLog.length === 0 && (
-                    <div className="text-[#8e9299] flex items-center justify-center h-full opacity-50 p-6 text-center text-xs">
+                    <div className="text-text-muted flex items-center justify-center h-full opacity-50 p-6 text-center text-xs">
                         Awaiting FT8 signals...<br/>(Audio decoded every 15s synced period)
                     </div>
                 )}
                 {rxLog.map((log, i) => (
                   log.isDivider ? (
                     <div key={i} className="flex items-center justify-center py-2 opacity-50">
-                       <span className="text-[9px] font-mono tracking-widest text-[#8e9299]">{log.message}</span>
+                       <span className="text-[9px] font-mono tracking-widest text-text-muted">{log.message}</span>
                     </div>
                   ) : (
                   <div 
@@ -676,12 +724,12 @@ export default function App() {
                       if(parts[0] === 'CQ') setTargetCall(parts[1]); 
                       else setTargetCall(parts[0]);
                     }}
-                    className="grid grid-cols-[55px_40px_60px_1fr] gap-2 hover:bg-[#23252a] cursor-pointer p-1 rounded transition-colors group text-[11px] items-center"
+                    className="grid grid-cols-[55px_40px_60px_1fr] gap-2 hover:bg-btn cursor-pointer p-1 rounded transition-colors group text-[11px] items-center"
                   >
                     <span className="text-zinc-500">{log.time}</span>
                     <span className={log.snr > -10 ? 'text-green-400' : 'text-red-400'}>{log.snr}</span>
                     <span className="text-blue-400">{log.freq}Hz</span>
-                    <span className="text-[#e0e0e0] group-hover:text-white font-bold">{log.message}</span>
+                    <span className="text-text-main group-hover:text-text-highlight font-bold">{log.message}</span>
                   </div>
                   )
                 ))}
@@ -690,15 +738,15 @@ export default function App() {
           </div>
 
           {/* QSO Window (Targeted Log) */}
-          <div className="bg-[#101010] border border-[#2a2c31] rounded-lg flex flex-col min-h-[250px] flex-1">
-            <div className="bg-[#1c1e23] border-b border-[#2a2c31] px-3 py-2 flex justify-between items-center rounded-t-lg">
-              <h3 className="text-[11px] font-bold text-[#8e9299] tracking-widest uppercase flex items-center gap-2">
-                <Activity size={14} className="text-[#4caf50]"/> 
+          <div className="bg-qso border border-border-subtle rounded-lg flex flex-col min-h-[250px] flex-1">
+            <div className="bg-header border-b border-border-subtle px-3 py-2 flex justify-between items-center rounded-t-lg">
+              <h3 className="text-[11px] font-bold text-text-muted tracking-widest uppercase flex items-center gap-2">
+                <Activity size={14} className="text-green-600 dark:text-[#4caf50]"/> 
                 Active QSO
               </h3>
             </div>
             <div className="flex-1 font-mono text-[11px] overflow-hidden p-2 flex flex-col">
-              <div className="grid grid-cols-[55px_40px_60px_1fr] gap-2 py-1 text-[#8e9299] border-b border-[#2a2c31] mb-2 uppercase text-[9px] shrink-0">
+              <div className="grid grid-cols-[55px_40px_60px_1fr] gap-2 py-1 text-text-muted border-b border-border-subtle mb-2 uppercase text-[9px] shrink-0">
                 <div>Time</div>
                 <div>SNR</div>
                 <div>Freq</div>
@@ -706,18 +754,18 @@ export default function App() {
               </div>
               <div className="flex-1 overflow-y-auto space-y-0.5 pr-1">
                 {qsoLog.length === 0 && (
-                    <div className="text-[#8e9299] flex items-center justify-center h-full opacity-50 p-6 text-center text-xs">
+                    <div className="text-text-muted flex items-center justify-center h-full opacity-50 p-6 text-center text-xs">
                         No active QSOs...
                     </div>
                 )}
                 {qsoLog.map((log, i) => {
-                  let textClass = "text-[#e0e0e0] font-bold";
+                  let textClass = "text-text-main font-bold";
                   if (log.isTx) textClass = "text-sky-300 font-bold";
                   else if (log.isIncoming) textClass = "text-green-400 font-bold";
                   
                   return log.isDivider ? (
                     <div key={i} className="flex items-center justify-center py-2 opacity-50">
-                       <span className="text-[9px] font-mono tracking-widest text-[#8e9299]">{log.message}</span>
+                       <span className="text-[9px] font-mono tracking-widest text-text-muted">{log.message}</span>
                     </div>
                   ) : (
                   <div 
@@ -727,12 +775,12 @@ export default function App() {
                       if(parts[0] === 'CQ') setTargetCall(parts[1]); 
                       else if (!log.isTx) setTargetCall(parts[0]);
                     }}
-                    className="grid grid-cols-[55px_40px_60px_1fr] gap-2 hover:bg-[#23252a] cursor-pointer p-1 rounded transition-colors group text-[11px] items-center"
+                    className="grid grid-cols-[55px_40px_60px_1fr] gap-2 hover:bg-btn cursor-pointer p-1 rounded transition-colors group text-[11px] items-center"
                   >
                     <span className="text-zinc-500">{log.time}</span>
                     <span className={log.isTx ? 'text-zinc-500' : (log.snr > -10 ? 'text-green-400' : 'text-red-400')}>{log.isTx ? '--' : log.snr}</span>
                     <span className="text-blue-400">{log.freq}Hz</span>
-                    <span className={`group-hover:text-white ${textClass}`}>{log.message}</span>
+                    <span className={`group-hover:text-text-highlight ${textClass}`}>{log.message}</span>
                   </div>
                   )
                 })}
@@ -742,9 +790,9 @@ export default function App() {
         </section>
 
         {/* Right pane: Waterfall DSP */}
-        <section className="lg:col-span-7 bg-[#050505] border border-[#2a2c31] rounded-lg overflow-hidden flex flex-col relative h-[300px] lg:h-auto">
-           <div className="absolute top-0 inset-x-0 bg-black/40 backdrop-blur-sm px-3 py-1 border-b border-[#2a2c31] flex justify-between z-10 pointer-events-none">
-            <span className="text-[9px] font-mono tracking-tighter text-[#4caf50]">WATERFALL (200 - 3000 Hz)</span>
+        <section className="lg:col-span-7 bg-white dark:bg-[#050505] border border-border-subtle rounded-lg overflow-hidden flex flex-col relative h-[300px] lg:h-auto">
+           <div className="absolute top-0 inset-x-0 bg-black/40 backdrop-blur-sm px-3 py-1 border-b border-border-subtle flex justify-between z-10 pointer-events-none">
+            <span className="text-[9px] font-mono tracking-tighter text-green-600 dark:text-[#4caf50]">WATERFALL (200 - 3000 Hz)</span>
             <div className="flex gap-4">
                <span className="text-[9px] font-mono text-zinc-500">1k</span>
                <span className="text-[9px] font-mono text-zinc-500">2k</span>
@@ -783,21 +831,21 @@ export default function App() {
       </div>
 
       {/* TX Operations Panel */}
-      <footer className="bg-[#1c1e23] border border-[#2a2c31] rounded-lg p-4 shadow-inner mt-3">
+      <footer className="bg-header border border-border-subtle rounded-lg p-4 shadow-inner mt-3">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-center">
           
-          <div className="space-y-3 md:border-r border-[#2a2c31] md:pr-4">
+          <div className="space-y-3 md:border-r border-border-subtle md:pr-4">
             <div className="flex flex-col">
-              <label className="text-[9px] uppercase tracking-widest text-[#8e9299] mb-1">My Station</label>
+              <label className="text-[9px] uppercase tracking-widest text-text-muted mb-1">My Station</label>
               <div className="flex items-center gap-2 cursor-pointer" onClick={() => setShowSettings(true)}>
-                <span className="bg-[#050505] border border-[#2a2c31] rounded px-3 py-1.5 text-xs font-mono text-[#4caf50] uppercase font-bold min-w-[80px] text-center" title="Click to edit in Settings">{myCall}</span>
-                <span className="bg-[#050505] border border-[#2a2c31] rounded px-3 py-1.5 text-xs font-mono text-[#8e9299] uppercase min-w-[60px] text-center" title="Click to edit in Settings">{myGrid}</span>
-                <span className="bg-[#050505] border border-[#2a2c31] rounded px-3 py-1.5 text-xs font-mono text-[#e0e0e0] min-w-[80px] text-center" title="Click to edit in Settings">{txFreq} Hz</span>
+                <span className="bg-white dark:bg-[#050505] border border-border-subtle rounded px-3 py-1.5 text-xs font-mono text-green-600 dark:text-[#4caf50] uppercase font-bold min-w-[80px] text-center" title="Click to edit in Settings">{myCall}</span>
+                <span className="bg-white dark:bg-[#050505] border border-border-subtle rounded px-3 py-1.5 text-xs font-mono text-text-muted uppercase min-w-[60px] text-center" title="Click to edit in Settings">{myGrid}</span>
+                <span className="bg-white dark:bg-[#050505] border border-border-subtle rounded px-3 py-1.5 text-xs font-mono text-text-main min-w-[80px] text-center" title="Click to edit in Settings">{txFreq} Hz</span>
               </div>
             </div>
             <div className="flex flex-col">
-              <label className="text-[9px] uppercase tracking-widest text-[#8e9299] mb-1">Target Station</label>
-              <input type="text" value={targetCall} placeholder="DX_CALL" onChange={e => setTargetCall(e.target.value.toUpperCase())} className="bg-[#0d0e10] border border-[#3a3d45] rounded px-2 py-1 text-xs font-mono w-full max-w-[200px] focus:outline-none focus:border-blue-500 text-[#e0e0e0] uppercase" />
+              <label className="text-[9px] uppercase tracking-widest text-text-muted mb-1">Target Station</label>
+              <input type="text" value={targetCall} placeholder="DX_CALL" onChange={e => setTargetCall(e.target.value.toUpperCase())} className="bg-app border border-border-input rounded px-2 py-1 text-xs font-mono w-full max-w-[200px] focus:outline-none focus:border-blue-500 text-text-main uppercase" />
             </div>
           </div>
 
@@ -805,7 +853,7 @@ export default function App() {
              <button 
                 onClick={() => transmitMessage(`CQ ${myCall} ${myGrid}`)}
                 disabled={!txEnabled || isTransmitting || isTxQueued}
-                className="h-10 bg-[#23252a] border border-[#3a3d45] hover:bg-[#2a2c33] disabled:opacity-50 disabled:hover:bg-[#23252a] text-[10px] font-bold rounded uppercase tracking-wider transition-colors flex items-center justify-center gap-1"
+                className="h-10 bg-btn border border-border-input hover:bg-btn-hover disabled:opacity-50 disabled:hover:bg-btn text-[10px] font-bold rounded uppercase tracking-wider transition-colors flex items-center justify-center gap-1"
               >
                  CQ {myCall}
              </button>
@@ -813,7 +861,7 @@ export default function App() {
              <button 
                 onClick={() => transmitMessage(`${targetCall} ${myCall} ${myGrid}`)}
                 disabled={!txEnabled || !targetCall || isTransmitting || isTxQueued}
-                className="h-10 bg-[#23252a] border border-[#3a3d45] hover:bg-[#2a2c33] disabled:opacity-50 disabled:hover:bg-[#23252a] text-[10px] font-bold rounded uppercase tracking-wider transition-colors flex items-center justify-center gap-1"
+                className="h-10 bg-btn border border-border-input hover:bg-btn-hover disabled:opacity-50 disabled:hover:bg-btn text-[10px] font-bold rounded uppercase tracking-wider transition-colors flex items-center justify-center gap-1"
               >
                  Ans {targetCall || '...'}
              </button>
@@ -821,7 +869,7 @@ export default function App() {
               <button 
                 onClick={() => transmitMessage(`${targetCall} ${myCall} 73`)}
                 disabled={!txEnabled || !targetCall || isTransmitting || isTxQueued}
-                className="h-10 bg-[#23252a] border border-[#3a3d45] hover:bg-[#2a2c33] disabled:opacity-50 disabled:hover:bg-[#23252a] text-[10px] font-bold rounded uppercase tracking-wider transition-colors flex items-center justify-center gap-1"
+                className="h-10 bg-btn border border-border-input hover:bg-btn-hover disabled:opacity-50 disabled:hover:bg-btn text-[10px] font-bold rounded uppercase tracking-wider transition-colors flex items-center justify-center gap-1"
               >
                  {targetCall || '...'} 73
              </button>
@@ -832,65 +880,88 @@ export default function App() {
              )}
           </div>
 
-          <div className="flex flex-col items-center justify-center md:pl-4 md:border-l border-[#2a2c31] mt-4 md:mt-0">
+          <div className="flex flex-col items-center justify-center md:pl-4 md:border-l border-border-subtle mt-4 md:mt-0">
             <button 
                onClick={() => setTxEnabled(!txEnabled)}
                className={`w-full h-16 border rounded flex flex-col items-center justify-center gap-1 group transition-all active:scale-95 ${
                  txEnabled 
                    ? 'bg-[#2a0e0e] border-[#4a1a1a] hover:bg-[#3a1212] text-[#ff4444]'
-                   : 'bg-[#23252a] border-[#3a3d45] hover:bg-[#2a2c33] text-[#8e9299]'
+                   : 'bg-btn border-border-input hover:bg-btn-hover text-text-muted'
                }`}
             >
                <span className="text-[10px] font-bold tracking-widest uppercase">{txEnabled ? 'TX Enabled' : 'Enable TX'}</span>
-               <div className={`w-8 h-2 rounded-full relative ${txEnabled ? 'bg-[#4a1a1a]' : 'bg-[#151619]'}`}>
+               <div className={`w-8 h-2 rounded-full relative ${txEnabled ? 'bg-[#4a1a1a]' : 'bg-panel'}`}>
                  <div className={`absolute left-0 top-0 w-3 h-2 rounded-full transition-all ${txEnabled ? 'bg-[#ff4444] shadow-[0_0_8px_#ff4444] translate-x-5' : 'bg-[#3a3d45]'}`}></div>
                </div>
             </button>
-            <p className="text-[8px] text-[#8e9299] mt-2 italic text-center">Awaiting VOX sync at :00, :15, :30, :45</p>
+            <p className="text-[8px] text-text-muted mt-2 italic text-center">Awaiting VOX sync at :00, :15, :30, :45</p>
           </div>
         </div>
       </footer>
 
       {showSettings && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-4">
-          <div className="bg-[#151619] border border-[#2a2c31] p-6 rounded-lg shadow-2xl w-full max-w-md">
+          <div className="bg-panel border border-border-subtle p-6 rounded-lg shadow-2xl w-full max-w-md">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-sm font-bold uppercase tracking-widest text-[#e0e0e0]">Station Configuration</h2>
-              <button onClick={() => setShowSettings(false)} className="text-[#8e9299] hover:text-[#e0e0e0]">
+              <h2 className="text-sm font-bold uppercase tracking-widest text-text-main">Station Configuration</h2>
+              <button onClick={() => setShowSettings(false)} className="text-text-muted hover:text-text-main">
                 <X size={20} />
               </button>
             </div>
             
             <div className="space-y-4">
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] uppercase tracking-widest text-[#8e9299]">My Callsign</label>
-                <input type="text" value={myCall} onChange={e => setMyCall(e.target.value.toUpperCase())} className="bg-[#0d0e10] border border-[#3a3d45] rounded px-3 py-2 text-sm font-mono w-full focus:outline-none focus:border-[#4caf50] text-[#e0e0e0] uppercase" />
+                <label className="text-[10px] uppercase tracking-widest text-text-muted">My Callsign</label>
+                <input type="text" value={myCall} onChange={e => setMyCall(e.target.value.toUpperCase())} className="bg-app border border-border-input rounded px-3 py-2 text-sm font-mono w-full focus:outline-none focus:border-[#4caf50] text-text-main uppercase" />
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] uppercase tracking-widest text-[#8e9299]">My Grid Locator</label>
-                <input type="text" value={myGrid} onChange={e => setMyGrid(e.target.value.toUpperCase())} className="bg-[#0d0e10] border border-[#3a3d45] rounded px-3 py-2 text-sm font-mono w-full focus:outline-none focus:border-[#4caf50] text-[#e0e0e0] uppercase" />
+                <label className="text-[10px] uppercase tracking-widest text-text-muted">My Grid Locator</label>
+                <input type="text" value={myGrid} onChange={e => setMyGrid(e.target.value.toUpperCase())} className="bg-app border border-border-input rounded px-3 py-2 text-sm font-mono w-full focus:outline-none focus:border-[#4caf50] text-text-main uppercase" />
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] uppercase tracking-widest text-[#8e9299]">Decoder Depth</label>
+                <label className="text-[10px] uppercase tracking-widest text-text-muted">Decoder Depth</label>
                 <select 
                   value={decodeDepth.toString()}
                   onChange={e => setDecodeDepth(Number(e.target.value))}
-                  className="bg-[#0d0e10] border border-[#3a3d45] text-[#e0e0e0] rounded px-3 py-2 text-xs font-mono w-full focus:outline-none focus:border-[#4caf50]"
+                  className="bg-app border border-border-input text-text-main rounded px-3 py-2 text-xs font-mono w-full focus:outline-none focus:border-[#4caf50]"
                 >
                   <option value="1">1 - Fast (Normal)</option>
                   <option value="2">2 - Deep (Slower, Decodes more)</option>
                   <option value="3">3 - Max (Slowest, Decodes weak signals)</option>
                 </select>
               </div>
+
+              <div className="flex items-center justify-between pt-2">
+                 <label className="text-[10px] uppercase tracking-widest text-text-muted">Color Scheme</label>
+                 <button 
+                    onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                    className="bg-app border border-border-input text-text-main rounded px-3 py-1 text-xs font-mono focus:outline-none hover:border-[#4caf50]"
+                 >
+                    {theme === 'dark' ? 'Dark Mode' : 'Light Mode'}
+                 </button>
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                 <div className="flex flex-col">
+                    <label className="text-[10px] uppercase tracking-widest text-text-muted">Prevent Screen Off</label>
+                    <span className="text-[9px] text-text-muted">Requires mobile Wake Lock support</span>
+                 </div>
+                 <button 
+                    onClick={() => setWakeLockEnabled(!wakeLockEnabled)}
+                    className="bg-app border border-border-input text-text-main rounded px-3 py-1 text-xs font-mono focus:outline-none hover:border-[#4caf50]"
+                 >
+                    {wakeLockEnabled ? 'Enabled' : 'Disabled'}
+                 </button>
+              </div>
               
-              <hr className="border-[#2a2c31] my-4" />
+              <hr className="border-border-subtle my-4" />
               
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] uppercase tracking-widest text-[#8e9299]">Audio Input (RX)</label>
+                <label className="text-[10px] uppercase tracking-widest text-text-muted">Audio Input (RX)</label>
                 <select 
                   value={selectedDeviceId}
                   onChange={handleDeviceChange}
-                  className="bg-[#0d0e10] border border-[#3a3d45] text-[#e0e0e0] rounded px-3 py-2 text-xs font-mono w-full focus:outline-none focus:border-[#4caf50]"
+                  className="bg-app border border-border-input text-text-main rounded px-3 py-2 text-xs font-mono w-full focus:outline-none focus:border-[#4caf50]"
                 >
                   <option value="">Default Source</option>
                   {audioDevices.map(d => (
@@ -902,11 +973,11 @@ export default function App() {
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] uppercase tracking-widest text-[#8e9299]">Audio Output (TX)</label>
+                <label className="text-[10px] uppercase tracking-widest text-text-muted">Audio Output (TX)</label>
                 <select 
                   value={selectedOutputDeviceId}
                   onChange={handleOutputDeviceChange}
-                  className="bg-[#0d0e10] border border-[#3a3d45] text-[#e0e0e0] rounded px-3 py-2 text-xs font-mono w-full focus:outline-none focus:border-[#4caf50]"
+                  className="bg-app border border-border-input text-text-main rounded px-3 py-2 text-xs font-mono w-full focus:outline-none focus:border-[#4caf50]"
                 >
                   <option value="default">System Default</option>
                   {audioOutputs.map(d => (
@@ -921,7 +992,7 @@ export default function App() {
             <div className="mt-8 flex justify-end">
                 <button 
                   onClick={() => setShowSettings(false)}
-                  className="bg-[#4caf50] hover:bg-green-600 text-black px-6 py-2 rounded text-xs font-bold uppercase tracking-widest"
+                  className="bg-green-600 dark:bg-[#4caf50] hover:bg-green-600 text-black px-6 py-2 rounded text-xs font-bold uppercase tracking-widest"
                 >
                   Save & Close
                 </button>

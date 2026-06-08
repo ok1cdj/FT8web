@@ -1,1 +1,43 @@
 @import "tailwindcss";
+
+:root {
+  --bg-app: #f0f0f4;
+  --bg-panel: #ffffff;
+  --bg-qso: #f8f9fa;
+  --bg-header: #f0f0f4;
+  --bg-btn: #e2e4e9;
+  --bg-btn-hover: #d1d5db;
+  --border-color: #cbd5e1;
+  --border-input: #94a3b8;
+  --text-main: #334155;
+  --text-muted: #64748b;
+  --text-highlight: #0f172a;
+}
+
+:root[data-theme="dark"] {
+  --bg-app: #0d0e10;
+  --bg-panel: #151619;
+  --bg-qso: #101010;
+  --bg-header: #1c1e23;
+  --bg-btn: #23252a;
+  --bg-btn-hover: #2a2c33;
+  --border-color: #2a2c31;
+  --border-input: #3a3d45;
+  --text-main: #e0e0e0;
+  --text-muted: #8e9299;
+  --text-highlight: #ffffff;
+}
+
+@theme {
+  --color-app: var(--bg-app);
+  --color-panel: var(--bg-panel);
+  --color-qso: var(--bg-qso);
+  --color-header: var(--bg-header);
+  --color-btn: var(--bg-btn);
+  --color-btn-hover: var(--bg-btn-hover);
+  --color-border-subtle: var(--border-color);
+  --color-border-input: var(--border-input);
+  --color-text-main: var(--text-main);
+  --color-text-muted: var(--text-muted);
+  --color-text-highlight: var(--text-highlight);
+}

@@ -1,6 +1,6 @@
 {
   "name": "Web FT8 PoC",
   "description": "Amateur Radio FT8 client running directly in the browser using Web Audio API.",
-  "requestFramePermissions": ["microphone"],
+  "requestFramePermissions": ["microphone", "screen-wake-lock"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
