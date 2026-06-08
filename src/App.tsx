@@ -1,0 +1,786 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Activity, Settings, X } from 'lucide-react';
+import { getCaptureWorkletUrl } from './AudioWorkletBlob';
+import { encodeFT8 } from '@e04/ft8ts';
+
+export interface FT8DecodedMessage {
+  time: string;
+  snr: number;
+  freq: number;
+  message: string;
+}
+
+export default function App() {
+  // Global Audio State
+  const [audioActive, setAudioActive] = useState(false);
+  const [audioLevel, setAudioLevel] = useState(0);
+  const [utcTime, setUtcTime] = useState('00:00:00');
+  const [windowProgress, setWindowProgress] = useState(0);
+  
+  // Device Selection State
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>(() => localStorage.getItem('ft8_audioInputId') || '');
+  const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([]);
+  const [selectedOutputDeviceId, setSelectedOutputDeviceId] = useState<string>(() => localStorage.getItem('ft8_audioOutputId') || 'default');
+
+  useEffect(() => {
+    localStorage.setItem('ft8_audioInputId', selectedDeviceId);
+    localStorage.setItem('ft8_audioOutputId', selectedOutputDeviceId);
+  }, [selectedDeviceId, selectedOutputDeviceId]);
+  
+  // Station Configuration State
+  const [myCall, setMyCall] = useState<string>(() => localStorage.getItem('ft8_myCall') || 'N0TMP');
+  const [myGrid, setMyGrid] = useState<string>(() => localStorage.getItem('ft8_myGrid') || 'EM12');
+  const [txFreq, setTxFreq] = useState<number>(() => {
+      const saved = localStorage.getItem('ft8_txFreq');
+      return saved ? Number(saved) : 1500;
+  }); // Default TX offset
+  const [decodeDepth, setDecodeDepth] = useState<number>(() => {
+      const saved = localStorage.getItem('ft8_decodeDepth');
+      return saved ? Number(saved) : 2;
+  });
+
+  useEffect(() => {
+      localStorage.setItem('ft8_myCall', myCall);
+      localStorage.setItem('ft8_myGrid', myGrid);
+      localStorage.setItem('ft8_txFreq', txFreq.toString());
+      localStorage.setItem('ft8_decodeDepth', decodeDepth.toString());
+  }, [myCall, myGrid, txFreq, decodeDepth]);
+
+  // UI State
+  const [showSettings, setShowSettings] = useState(false);
+  
+  // App State
+  const [rxLog, setRxLog] = useState<FT8DecodedMessage[]>([]);
+  const [isTransmitting, setIsTransmitting] = useState(false);
+  const [isTxQueued, setIsTxQueued] = useState(false);
+  
+  // TX Controls State
+  const [targetCall, setTargetCall] = useState('');
+  const [txEnabled, setTxEnabled] = useState(false);
+
+  // Core References
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const captureNodeRef = useRef<AudioWorkletNode | null>(null);
+  const txSourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
+  const queuedTxMessageRef = useRef<string | null>(null);
+
+  // Clean up any active TX
+  const stopTx = useCallback(() => {
+    queuedTxMessageRef.current = null;
+    if (txSourceNodeRef.current) {
+        try {
+            txSourceNodeRef.current.stop();
+        } catch (e) {}
+        try {
+            txSourceNodeRef.current.disconnect();
+        } catch (e) {}
+        txSourceNodeRef.current = null;
+    }
+    setIsTransmitting(false);
+    setIsTxQueued(false);
+  }, []);
+
+  // Monitor txEnabled toggle for stopping TX
+  useEffect(() => {
+    if (!txEnabled && (isTransmitting || isTxQueued)) {
+        stopTx();
+    }
+  }, [txEnabled, isTransmitting, isTxQueued, stopTx]);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const rxBufferRef = useRef<Float32Array>(new Float32Array(0));
+  const workerRef = useRef<Worker | null>(null);
+  const lastDrawTimeRef = useRef<number>(0);
+  const lastPeriodRef = useRef<number>(-1);
+
+  const getDevices = async () => {
+    try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const inputs = devices.filter(d => d.kind === 'audioinput');
+        const outputs = devices.filter(d => d.kind === 'audiooutput');
+        setAudioDevices(inputs);
+        setAudioOutputs(outputs);
+        if (inputs.length > 0) {
+            setSelectedDeviceId(prev => {
+                if (prev && inputs.some(a => a.deviceId === prev)) return prev;
+                return inputs[0].deviceId;
+            });
+        }
+        if (outputs.length > 0) {
+            setSelectedOutputDeviceId(prev => {
+                if (prev && outputs.some(a => a.deviceId === prev)) return prev;
+                return 'default';
+            });
+        }
+    } catch (err) {
+        console.error("Error enumerating devices", err);
+    }
+  };
+
+  // Initialize Web Worker and Devices
+  useEffect(() => {
+    getDevices();
+    navigator.mediaDevices.addEventListener('devicechange', getDevices);
+
+    const worker = new Worker(new URL('./ft8-worker.ts', import.meta.url), { type: 'module' });
+    worker.onmessage = (e) => {
+      if (e.data.type === 'DECODED' && e.data.payload.length > 0) {
+        setRxLog(prev => {
+          const newLog = [...e.data.payload, ...prev];
+          return newLog.slice(0, 100); 
+        });
+      } else if (e.data.type === 'ERROR') {
+        console.error("FT8 Decode Worker Error:", e.data.error);
+      }
+    };
+    workerRef.current = worker;
+    return () => {
+      navigator.mediaDevices.removeEventListener('devicechange', getDevices);
+      worker.terminate();
+    };
+  }, []);
+
+  const drawWaterfall = useCallback((time: number) => {
+    // TX Freeze Logic: completely freeze waterfall if Transmitting
+    if (isTransmitting) return;
+
+    // Throttle to 100ms (10fps). 1 pixel per frame = 10 px / sec.
+    if (time - lastDrawTimeRef.current < 100) return;
+    lastDrawTimeRef.current = time;
+
+    if (!analyserRef.current || !canvasRef.current) return;
+    
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return;
+    
+    const analyser = analyserRef.current;
+    const audioCtx = audioCtxRef.current;
+    if (!audioCtx) return;
+
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(dataArray);
+    
+    const width = canvas.width;
+    const height = canvas.height;
+    
+    // Zoom waterfall to exactly 200 to 3000 Hz.
+    const sampleRate = audioCtx.sampleRate;
+    const binSize = sampleRate / analyser.fftSize;
+    const minBinIndex = Math.floor(200 / binSize);
+    const maxBinIndex = Math.floor(3000 / binSize);
+    const binSpan = maxBinIndex - minBinIndex;
+    
+    // Shift current canvas image vertically downwards by 1px
+    ctx.drawImage(canvas, 0, 0, width, height - 1, 0, 1, width, height - 1);
+    
+    // Compute the new top row
+    const rowImg = ctx.createImageData(width, 1);
+    for (let x = 0; x < width; x++) {
+      const binIndex = minBinIndex + Math.floor((x / width) * binSpan);
+      const val = dataArray[binIndex] || 0;
+      
+      const px = x * 4;
+      // Smooth color palette: Black -> Blue -> Purple/Red -> Yellow/White
+      let r = 0, g = 0, b = 0;
+      
+      if (val < 50) {
+        b = val * 2;
+      } else if (val < 100) {
+        b = 100 + (val - 50) * 3;
+        r = (val - 50) * 2;
+      } else if (val < 180) {
+        b = 250 - (val - 100);
+        r = 100 + (val - 100) * 1.5;
+      } else {
+        r = 255;
+        g = (val - 180) * 3;
+        b = (val - 220) * 5 > 0 ? (val - 220) * 5 : 0;
+      }
+      
+      rowImg.data[px + 0] = Math.min(255, Math.max(0, r)); 
+      rowImg.data[px + 1] = Math.min(255, Math.max(0, g));   
+      rowImg.data[px + 2] = Math.min(255, Math.max(0, b));                             
+      rowImg.data[px + 3] = 255;                            
+    }
+    
+    ctx.putImageData(rowImg, 0, 0);
+
+    // Period Markers (15s boundaries)
+    const currentDate = new Date();
+    const seconds = currentDate.getUTCSeconds();
+    
+    if (seconds % 15 === 0 && lastPeriodRef.current !== seconds) {
+      lastPeriodRef.current = seconds;
+      
+      // Draw divider line
+      ctx.fillStyle = 'rgba(255, 215, 0, 0.4)'; // Semi-transparent gold
+      ctx.fillRect(0, 0, width, 1);
+      
+      // Target text cleanly below the line (at Y=12)
+      ctx.fillStyle = 'rgba(255, 215, 0, 0.9)';
+      ctx.font = '10px "JetBrains Mono", monospace';
+      ctx.fillText(currentDate.toISOString().substring(11, 19) + ' UTC', 4, 12);
+    }
+  }, [isTransmitting]);
+
+  const toggleAudio = async (forcedDeviceId?: string) => {
+    const targetDeviceId = typeof forcedDeviceId === 'string' ? forcedDeviceId : selectedDeviceId;
+    
+    if (audioActive && typeof forcedDeviceId === 'undefined') {
+        if (mediaStreamRef.current) {
+            mediaStreamRef.current.getTracks().forEach(t => t.stop());
+            mediaStreamRef.current = null;
+        }
+        if (audioCtxRef.current && audioCtxRef.current.state === 'running') {
+            await audioCtxRef.current.suspend();
+        }
+        setAudioActive(false);
+        setAudioLevel(0);
+        return;
+    }
+
+    try {
+      let ctx = audioCtxRef.current;
+      if (!ctx) {
+          // Must be derived via user interaction for iOS strict compliance
+          const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
+          // FT8 strongly prefers 12KHz. We request it, but must be resilient if OS overrides it.
+          ctx = new AudioContextCtor({ sampleRate: 12000 });
+          audioCtxRef.current = ctx;
+      }
+
+      if (ctx.state === 'suspended') {
+          await ctx.resume();
+      }
+
+      if (typeof (ctx as any).setSinkId === 'function' && selectedOutputDeviceId) {
+          (ctx as any).setSinkId(selectedOutputDeviceId).catch((e: any) => console.error("setSinkId fail:", e));
+      }
+      
+      if (mediaStreamRef.current) {
+          mediaStreamRef.current.getTracks().forEach(t => t.stop());
+      }
+      if (sourceNodeRef.current) {
+          sourceNodeRef.current.disconnect();
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          ...(targetDeviceId ? { deviceId: { exact: targetDeviceId } } : {}),
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false, 
+        } 
+      });
+      mediaStreamRef.current = stream;
+      
+      const source = ctx.createMediaStreamSource(stream);
+      sourceNodeRef.current = source;
+      
+      // Waterfall visualizer pipeline
+      if (!analyserRef.current) {
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 4096;
+          analyser.smoothingTimeConstant = 0.0;
+          analyser.minDecibels = -110;
+          analyser.maxDecibels = -30;
+          analyserRef.current = analyser;
+      }
+      source.connect(analyserRef.current);
+      
+      // Accumulator pipeline via Worklet
+      if (!captureNodeRef.current) {
+          const workletUrl = getCaptureWorkletUrl();
+          await ctx.audioWorklet.addModule(workletUrl);
+          const captureNode = new AudioWorkletNode(ctx, 'capture-processor');
+          
+          captureNode.port.onmessage = (e) => {
+              const chunk = e.data as Float32Array;
+              // Calculate RMS level for VU meter
+              let sumSquares = 0;
+              for(let i=0; i<chunk.length; i++) sumSquares += chunk[i] * chunk[i];
+              const rms = Math.sqrt(sumSquares / chunk.length);
+              // Scale RMS roughly to 0-100 progress
+              setAudioLevel(Math.min(100, rms * 1500)); 
+              
+              // Only accumulate if we are in the 0.0 - 13.0s recording window
+              const now = new Date();
+              const secondsInWindow = (now.getUTCSeconds() + now.getUTCMilliseconds() / 1000) % 15;
+              
+              if (secondsInWindow < 13.0) {
+                  // Accumulate raw payload
+                  const newBuffer = new Float32Array(rxBufferRef.current.length + chunk.length);
+                  newBuffer.set(rxBufferRef.current, 0);
+                  newBuffer.set(chunk, rxBufferRef.current.length);
+                  rxBufferRef.current = newBuffer;
+              }
+          };
+          captureNode.connect(ctx.destination); 
+          captureNodeRef.current = captureNode;
+      }
+      
+      source.connect(captureNodeRef.current);
+      
+      setAudioActive(true);
+      getDevices(); // Refresh devices now that permissions may be granted
+    } catch (e) {
+      console.error("Audio Context Init Failed:", e);
+      alert("Failed to initialize audio or access microphone. Check browser permissions.");
+    }
+  };
+
+  const handleDeviceChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+      const newId = e.target.value;
+      setSelectedDeviceId(newId);
+      if (audioActive) {
+          toggleAudio(newId);
+      }
+  };
+
+  const handleOutputDeviceChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+      const newId = e.target.value;
+      setSelectedOutputDeviceId(newId);
+      if (audioCtxRef.current && typeof (audioCtxRef.current as any).setSinkId === 'function') {
+          try {
+              await (audioCtxRef.current as any).setSinkId(newId);
+          } catch (err) {
+              console.error("Failed to set output device:", err);
+          }
+      }
+  };
+
+  // TX Orchestrator
+  const transmitMessage = async (message: string) => {
+    if (!audioCtxRef.current || isTransmitting || isTxQueued || !txEnabled) return;
+    
+    // Guarantee audio is alive before queuing
+    if (audioCtxRef.current.state === 'suspended') {
+        await audioCtxRef.current.resume();
+    }
+    
+    queuedTxMessageRef.current = message;
+    setIsTxQueued(true);
+  };
+
+  // Sync Interval Management & Animation Frame
+  useEffect(() => {
+    let animationFrameId: number;
+    let periodState = {
+       lastPeriod: -1,
+       decodedThisPeriod: false,
+    };
+    
+    const loop = (time: number) => {
+      animationFrameId = requestAnimationFrame(loop);
+      
+      const now = new Date();
+      const seconds = now.getUTCSeconds();
+      const ms = now.getUTCMilliseconds();
+      const totalSeconds = seconds + (ms / 1000);
+      
+      const currentPeriod = Math.floor(seconds / 15);
+      const secondsInWindow = totalSeconds % 15;
+      
+      setWindowProgress((secondsInWindow / 15) * 100);
+      setUtcTime(now.toISOString().substring(11, 19));
+      
+      // Epoch boundary: 0.0s mark
+      if (currentPeriod !== periodState.lastPeriod && periodState.lastPeriod !== -1) {
+        periodState.lastPeriod = currentPeriod;
+        periodState.decodedThisPeriod = false;
+        
+        // Start TX exactly at 0.0s if queued
+        if (queuedTxMessageRef.current && txEnabled) {
+            const message = queuedTxMessageRef.current;
+            queuedTxMessageRef.current = null;
+            setIsTxQueued(false);
+            setIsTransmitting(true);
+            
+            const ctx = audioCtxRef.current;
+            if (ctx && ctx.state !== 'suspended') {
+                if (typeof (ctx as any).setSinkId === 'function') {
+                    (ctx as any).setSinkId(selectedOutputDeviceId).catch((e: any) => console.error("setSinkId fail:", e));
+                }
+                
+                try {
+                    // Generate the FT8 waveform for 15 seconds
+                    const audioData = encodeFT8(message, { 
+                      sampleRate: ctx.sampleRate,
+                      baseFrequency: txFreq 
+                    });
+                    
+                    const audioBuffer = ctx.createBuffer(1, audioData.length, ctx.sampleRate);
+                    audioBuffer.copyToChannel(audioData, 0);
+                    
+                    const sourceNode = ctx.createBufferSource();
+                    sourceNode.buffer = audioBuffer;
+                    
+                    const gain = ctx.createGain();
+                    gain.gain.setValueAtTime(1, ctx.currentTime);
+                    
+                    sourceNode.connect(gain);
+                    gain.connect(ctx.destination);
+                    
+                    sourceNode.start(ctx.currentTime);
+                    txSourceNodeRef.current = sourceNode;
+                    
+                    sourceNode.onended = () => {
+                        setIsTransmitting(false);
+                        txSourceNodeRef.current = null;
+                    };
+                } catch (err) {
+                    console.error("FT8 Encoding Error:", err);
+                    setIsTransmitting(false);
+                }
+            } else {
+                setIsTransmitting(false);
+            }
+        }
+        
+        // Clear RX buffer for the new recording period
+        rxBufferRef.current = new Float32Array(0);
+      } else if (currentPeriod !== periodState.lastPeriod) {
+        // Init first run
+        periodState.lastPeriod = currentPeriod;
+      }
+
+      // 13.0s mark trigger to Decode
+      if (secondsInWindow >= 13.0 && !periodState.decodedThisPeriod) {
+        periodState.decodedThisPeriod = true;
+        const audioData = rxBufferRef.current;
+        
+        if (audioActive && audioCtxRef.current && audioData.length > 0) {
+            if (workerRef.current) {
+                const nowString = now.toISOString().substring(11, 19).replace(/:/g, '');
+                workerRef.current.postMessage({
+                    audioData,
+                    sampleRate: audioCtxRef.current.sampleRate,
+                    nowString,
+                    decodeDepth
+                });
+            }
+        }
+      }
+
+      if (audioActive) {
+          drawWaterfall(time);
+      }
+    };
+    
+    animationFrameId = requestAnimationFrame(loop);
+    
+    return () => {
+        cancelAnimationFrame(animationFrameId);
+    };
+  }, [audioActive, drawWaterfall, decodeDepth, txEnabled, txFreq, selectedOutputDeviceId]);
+
+  const handleWaterfallClick = (e: React.MouseEvent<HTMLElement, MouseEvent>) => {
+    if (!canvasRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const freq = Math.round((x / rect.width) * 2800) + 200;
+    setTxFreq(Math.max(200, Math.min(3000, freq)));
+  };
+
+  return (
+    <div className="min-h-screen bg-[#0d0e10] text-[#e0e0e0] font-sans flex flex-col p-4 select-none">
+      
+      {/* Header Pipeline */}
+      <header className="flex flex-wrap items-center justify-between bg-[#151619] border border-[#2a2c31] rounded-lg p-4 mb-3 shadow-lg gap-4">
+        <div className="flex items-center gap-6 flex-wrap">
+          <div className="flex flex-col">
+            <span className="text-[10px] uppercase tracking-widest text-[#8e9299] mb-1">System Status</span>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => toggleAudio()}
+                className={`px-3 py-1.5 border rounded text-[10px] font-bold transition-all flex items-center gap-2 uppercase tracking-widest ${
+                  audioActive 
+                    ? 'bg-[#23252a] border-[#4caf50] text-[#4caf50] hover:border-red-500 hover:text-red-500'
+                    : 'bg-[#23252a] border-[#3a3d45] hover:border-[#4caf50] text-[#8e9299] hover:text-[#4caf50]'
+                }`}
+              >
+                <div className={`w-2 h-2 rounded-full ${audioActive ? 'bg-[#4caf50] shadow-[0_0_8px_#4caf50]' : 'bg-[#2a2c31]'}`}></div>
+                {audioActive ? "Audio Active" : "Activate Audio"}
+              </button>
+              <button
+                onClick={() => setShowSettings(true)}
+                className="px-2 border border-[#3a3d45] bg-[#23252a] hover:bg-[#2a2c31] rounded flex items-center justify-center text-[#8e9299] hover:text-[#e0e0e0] transition-colors"
+                title="Settings"
+              >
+                  <Settings size={14} />
+              </button>
+            </div>
+          </div>
+
+          {/* VU Meter Payload */}
+          <div className="flex flex-col min-w-[140px]">
+            <span className="text-[10px] uppercase tracking-widest text-[#8e9299] mb-1">Input Level (VU)</span>
+            <div className="h-4 bg-black rounded-sm border border-[#2a2c31] relative overflow-hidden">
+              <div 
+                className="absolute left-0 top-0 h-full bg-gradient-to-r from-green-500 via-yellow-400 to-red-500 opacity-80 transition-all duration-75 ease-linear"
+                style={{ width: `${audioLevel}%` }}
+              />
+              <div className="absolute inset-0 grid grid-cols-10 gap-px px-0.5">
+                {[...Array(10)].map((_, i) => <div key={i} className="border-r border-black/50 h-full" />)}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-col items-center">
+          <span className="text-[10px] uppercase tracking-widest text-[#8e9299] mb-1">FT8 Window (15s Sync)</span>
+          <div className="w-32 md:w-48 h-1.5 bg-black rounded-full border border-[#2a2c31] relative overflow-hidden">
+             <div 
+              className="absolute left-0 top-0 h-full bg-[#4caf50] transition-all duration-75 ease-linear shadow-[0_0_5px_rgba(76,175,80,0.5)]"
+              style={{ width: `${windowProgress}%` }}
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-col items-end min-w-[120px]">
+          <span className="text-[10px] uppercase tracking-widest text-[#8e9299] block mb-1">Station Clock (UTC)</span>
+          <span className="text-2xl font-mono font-bold text-[#e0e0e0] leading-none">
+            {utcTime}
+          </span>
+        </div>
+      </header>
+
+      {/* Main Working Environment */}
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-[400px]">
+        
+        {/* Left pane: Decoded Stream */}
+        <section className="lg:col-span-5 bg-[#151619] border border-[#2a2c31] rounded-lg flex flex-col min-h-0">
+          <div className="bg-[#1c1e23] border-b border-[#2a2c31] px-3 py-2 flex justify-between items-center rounded-t-lg">
+            <h3 className="text-[11px] font-bold text-[#8e9299] tracking-widest uppercase flex items-center gap-2">
+              <Activity size={14} className="text-[#4caf50]"/> Decoded Messages
+            </h3>
+            <span className="text-[9px] text-green-500 bg-green-500/10 px-1.5 py-0.5 rounded border border-green-500/20">RX ON</span>
+          </div>
+          <div className="flex-1 font-mono text-[11px] overflow-hidden p-2 flex flex-col">
+            <div className="grid grid-cols-[55px_40px_60px_1fr] gap-2 py-1 text-[#8e9299] border-b border-[#2a2c31] mb-2 uppercase text-[9px] shrink-0">
+              <div>Time</div>
+              <div>SNR</div>
+              <div>Freq</div>
+              <div>Message</div>
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-0.5 pr-1">
+              {rxLog.length === 0 && (
+                  <div className="text-[#8e9299] flex items-center justify-center h-full opacity-50 p-6 text-center text-xs">
+                      Awaiting FT8 signals...<br/>(Audio decoded every 15s synced period)
+                  </div>
+              )}
+              {rxLog.map((log, i) => (
+                <div 
+                  key={i}
+                  onClick={() => {
+                    const parts = log.message.split(' ');
+                    if(parts[0] === 'CQ') setTargetCall(parts[1]); 
+                    else setTargetCall(parts[0]);
+                  }}
+                  className="grid grid-cols-[55px_40px_60px_1fr] gap-2 hover:bg-[#23252a] cursor-pointer p-1 rounded transition-colors group text-[11px] items-center"
+                >
+                  <span className="text-zinc-500">{log.time}</span>
+                  <span className={log.snr > -10 ? 'text-green-400' : 'text-red-400'}>{log.snr}</span>
+                  <span className="text-blue-400">{log.freq}Hz</span>
+                  <span className="text-[#e0e0e0] group-hover:text-white font-bold">{log.message}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* Right pane: Waterfall DSP */}
+        <section className="lg:col-span-7 bg-[#050505] border border-[#2a2c31] rounded-lg overflow-hidden flex flex-col relative h-[600px]">
+           <div className="absolute top-0 inset-x-0 bg-black/40 backdrop-blur-sm px-3 py-1 border-b border-[#2a2c31] flex justify-between z-10 pointer-events-none">
+            <span className="text-[9px] font-mono tracking-tighter text-[#4caf50]">WATERFALL (200 - 3000 Hz)</span>
+            <div className="flex gap-4">
+               <span className="text-[9px] font-mono text-zinc-500">1k</span>
+               <span className="text-[9px] font-mono text-zinc-500">2k</span>
+               <span className="text-[9px] font-mono text-zinc-500">3k</span>
+            </div>
+          </div>
+          <div className="flex-1 relative bg-black flex items-end">
+            <canvas 
+               ref={canvasRef}
+               width={1024} 
+               height={600} 
+               className="w-full h-full block cursor-crosshair"
+               onClick={handleWaterfallClick}
+            />
+            {/* TX Frequency Overlay Bar (50 Hz wide) */}
+            <div 
+               className="absolute top-0 bottom-0 bg-red-500/35 border-x border-red-500/50 pointer-events-none transition-all duration-75"
+               style={{ 
+                 left: `${((txFreq - 200) / 2800) * 100}%`, 
+                 width: `${(50 / 2800) * 100}%`,
+                 transform: 'translateX(-50%)'
+               }}
+            />
+            {/* Waterfall Static Vertical Rule */}
+            <div className="absolute inset-0 flex pointer-events-none">
+               <div className="h-full w-px bg-[#2a2c31]/30 ml-[33.3%]"></div>
+               <div className="h-full w-px bg-[#2a2c31]/30 ml-[33.3%]"></div>
+            </div>
+            {!audioActive && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/60 font-bold text-zinc-500 z-20 text-xs">
+                    AUDIO INACTIVE
+                </div>
+            )}
+          </div>
+        </section>
+      </div>
+
+      {/* TX Operations Panel */}
+      <footer className="bg-[#1c1e23] border border-[#2a2c31] rounded-lg p-4 shadow-inner mt-3">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-center">
+          
+          <div className="space-y-3 md:border-r border-[#2a2c31] md:pr-4">
+            <div className="flex flex-col">
+              <label className="text-[9px] uppercase tracking-widest text-[#8e9299] mb-1">My Station</label>
+              <div className="flex items-center gap-2 cursor-pointer" onClick={() => setShowSettings(true)}>
+                <span className="bg-[#050505] border border-[#2a2c31] rounded px-3 py-1.5 text-xs font-mono text-[#4caf50] uppercase font-bold min-w-[80px] text-center" title="Click to edit in Settings">{myCall}</span>
+                <span className="bg-[#050505] border border-[#2a2c31] rounded px-3 py-1.5 text-xs font-mono text-[#8e9299] uppercase min-w-[60px] text-center" title="Click to edit in Settings">{myGrid}</span>
+                <span className="bg-[#050505] border border-[#2a2c31] rounded px-3 py-1.5 text-xs font-mono text-[#e0e0e0] min-w-[80px] text-center" title="Click to edit in Settings">{txFreq} Hz</span>
+              </div>
+            </div>
+            <div className="flex flex-col">
+              <label className="text-[9px] uppercase tracking-widest text-[#8e9299] mb-1">Target Station</label>
+              <input type="text" value={targetCall} placeholder="DX_CALL" onChange={e => setTargetCall(e.target.value.toUpperCase())} className="bg-[#0d0e10] border border-[#3a3d45] rounded px-2 py-1 text-xs font-mono w-full max-w-[200px] focus:outline-none focus:border-blue-500 text-[#e0e0e0] uppercase" />
+            </div>
+          </div>
+
+          <div className="md:col-span-2 grid grid-cols-2 sm:grid-cols-3 gap-2 px-0 md:px-2">
+             <button 
+                onClick={() => transmitMessage(`CQ ${myCall} ${myGrid}`)}
+                disabled={!txEnabled || isTransmitting || isTxQueued}
+                className="h-10 bg-[#23252a] border border-[#3a3d45] hover:bg-[#2a2c33] disabled:opacity-50 disabled:hover:bg-[#23252a] text-[10px] font-bold rounded uppercase tracking-wider transition-colors flex items-center justify-center gap-1"
+              >
+                 CQ {myCall}
+             </button>
+             
+             <button 
+                onClick={() => transmitMessage(`${targetCall} ${myCall} ${myGrid}`)}
+                disabled={!txEnabled || !targetCall || isTransmitting || isTxQueued}
+                className="h-10 bg-[#23252a] border border-[#3a3d45] hover:bg-[#2a2c33] disabled:opacity-50 disabled:hover:bg-[#23252a] text-[10px] font-bold rounded uppercase tracking-wider transition-colors flex items-center justify-center gap-1"
+              >
+                 Ans {targetCall || '...'}
+             </button>
+
+              <button 
+                onClick={() => transmitMessage(`${targetCall} ${myCall} 73`)}
+                disabled={!txEnabled || !targetCall || isTransmitting || isTxQueued}
+                className="h-10 bg-[#23252a] border border-[#3a3d45] hover:bg-[#2a2c33] disabled:opacity-50 disabled:hover:bg-[#23252a] text-[10px] font-bold rounded uppercase tracking-wider transition-colors flex items-center justify-center gap-1"
+              >
+                 {targetCall || '...'} 73
+             </button>
+             {(isTransmitting || isTxQueued) && (
+                <div className={`col-span-full mt-1 flex items-center justify-center gap-2 p-2 ${isTransmitting ? 'bg-rose-950/40 text-rose-400 border-rose-900 animate-pulse' : 'bg-amber-950/40 text-amber-500 border-amber-900'} border rounded font-bold text-[10px] uppercase tracking-widest`}>
+                    <Activity size={12} className={isTransmitting ? "" : "opacity-50"} /> {isTransmitting ? 'Transmitting...' : 'TX Queued...'}
+                </div>
+             )}
+          </div>
+
+          <div className="flex flex-col items-center justify-center md:pl-4 md:border-l border-[#2a2c31] mt-4 md:mt-0">
+            <button 
+               onClick={() => setTxEnabled(!txEnabled)}
+               className={`w-full h-16 border rounded flex flex-col items-center justify-center gap-1 group transition-all active:scale-95 ${
+                 txEnabled 
+                   ? 'bg-[#2a0e0e] border-[#4a1a1a] hover:bg-[#3a1212] text-[#ff4444]'
+                   : 'bg-[#23252a] border-[#3a3d45] hover:bg-[#2a2c33] text-[#8e9299]'
+               }`}
+            >
+               <span className="text-[10px] font-bold tracking-widest uppercase">{txEnabled ? 'TX Enabled' : 'Enable TX'}</span>
+               <div className={`w-8 h-2 rounded-full relative ${txEnabled ? 'bg-[#4a1a1a]' : 'bg-[#151619]'}`}>
+                 <div className={`absolute left-0 top-0 w-3 h-2 rounded-full transition-all ${txEnabled ? 'bg-[#ff4444] shadow-[0_0_8px_#ff4444] translate-x-5' : 'bg-[#3a3d45]'}`}></div>
+               </div>
+            </button>
+            <p className="text-[8px] text-[#8e9299] mt-2 italic text-center">Awaiting VOX sync at :00, :15, :30, :45</p>
+          </div>
+        </div>
+      </footer>
+
+      {showSettings && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-4">
+          <div className="bg-[#151619] border border-[#2a2c31] p-6 rounded-lg shadow-2xl w-full max-w-md">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-sm font-bold uppercase tracking-widest text-[#e0e0e0]">Station Configuration</h2>
+              <button onClick={() => setShowSettings(false)} className="text-[#8e9299] hover:text-[#e0e0e0]">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] uppercase tracking-widest text-[#8e9299]">My Callsign</label>
+                <input type="text" value={myCall} onChange={e => setMyCall(e.target.value.toUpperCase())} className="bg-[#0d0e10] border border-[#3a3d45] rounded px-3 py-2 text-sm font-mono w-full focus:outline-none focus:border-[#4caf50] text-[#e0e0e0] uppercase" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] uppercase tracking-widest text-[#8e9299]">My Grid Locator</label>
+                <input type="text" value={myGrid} onChange={e => setMyGrid(e.target.value.toUpperCase())} className="bg-[#0d0e10] border border-[#3a3d45] rounded px-3 py-2 text-sm font-mono w-full focus:outline-none focus:border-[#4caf50] text-[#e0e0e0] uppercase" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] uppercase tracking-widest text-[#8e9299]">Decoder Depth</label>
+                <select 
+                  value={decodeDepth.toString()}
+                  onChange={e => setDecodeDepth(Number(e.target.value))}
+                  className="bg-[#0d0e10] border border-[#3a3d45] text-[#e0e0e0] rounded px-3 py-2 text-xs font-mono w-full focus:outline-none focus:border-[#4caf50]"
+                >
+                  <option value="1">1 - Fast (Normal)</option>
+                  <option value="2">2 - Deep (Slower, Decodes more)</option>
+                  <option value="3">3 - Max (Slowest, Decodes weak signals)</option>
+                </select>
+              </div>
+              
+              <hr className="border-[#2a2c31] my-4" />
+              
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] uppercase tracking-widest text-[#8e9299]">Audio Input (RX)</label>
+                <select 
+                  value={selectedDeviceId}
+                  onChange={handleDeviceChange}
+                  className="bg-[#0d0e10] border border-[#3a3d45] text-[#e0e0e0] rounded px-3 py-2 text-xs font-mono w-full focus:outline-none focus:border-[#4caf50]"
+                >
+                  <option value="">Default Source</option>
+                  {audioDevices.map(d => (
+                    <option key={d.deviceId} value={d.deviceId}>
+                      {d.label || `Input ${d.deviceId.substring(0,5)}...`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] uppercase tracking-widest text-[#8e9299]">Audio Output (TX)</label>
+                <select 
+                  value={selectedOutputDeviceId}
+                  onChange={handleOutputDeviceChange}
+                  className="bg-[#0d0e10] border border-[#3a3d45] text-[#e0e0e0] rounded px-3 py-2 text-xs font-mono w-full focus:outline-none focus:border-[#4caf50]"
+                >
+                  <option value="default">System Default</option>
+                  {audioOutputs.map(d => (
+                    <option key={d.deviceId} value={d.deviceId}>
+                      {d.label || `Output ${d.deviceId.substring(0,5)}...`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            
+            <div className="mt-8 flex justify-end">
+                <button 
+                  onClick={() => setShowSettings(false)}
+                  className="bg-[#4caf50] hover:bg-green-600 text-black px-6 py-2 rounded text-xs font-bold uppercase tracking-widest"
+                >
+                  Save & Close
+                </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
