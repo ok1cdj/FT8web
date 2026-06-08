@@ -4,6 +4,7 @@ An Amateur Radio FT8 client running entirely in the browser using the Web Audio 
 
 ## Features
 - **In-Browser Decoding/Encoding:** Uses a Web Worker to decode FT8 audio streams in the background without blocking the UI.
+- **Band Activity & Active QSO:** Separated global logs and targeted incoming/outgoing QSO messages for clear visibility.
 - **Hardware VOX Compatible:** Audio generation uses a hard-start envelope to ensure immediate triggering of transceiver hardware VOX (No CAT control required).
 - **Live Waterfall:** Web Audio API AnalyserNode rendering a high-contrast waterfall focused tightly on the SSB filter bandwidth (0 Hz - 3000 Hz).
 - **iOS Compliant:** Strict user-interaction requirements for audio context creation to ensure compatibility with Safari on iOS.
