@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Activity, Settings, X } from 'lucide-react';
+import { Activity, Settings, X, HelpCircle } from 'lucide-react';
 import { getCaptureWorkletUrl } from './AudioWorkletBlob';
 import { encodeFT8 } from '@e04/ft8ts';
 import CatManager from './CatManager.js';
@@ -33,6 +33,15 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('ft8_vfoFreq', vfoFreq.toString());
   }, [vfoFreq]);
+
+  const [txPeriod, setTxPeriod] = useState<number>(() => {
+    const saved = localStorage.getItem('ft8_txPeriod');
+    return saved !== null ? Number(saved) : 0; // 0 = Even, 1 = Odd
+  });
+
+  useEffect(() => {
+    localStorage.setItem('ft8_txPeriod', txPeriod.toString());
+  }, [txPeriod]);
 
   // Global Audio State
   const [audioActive, setAudioActive] = useState(false);
@@ -145,6 +154,7 @@ export default function App() {
 
   // UI State
   const [showSettings, setShowSettings] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
   const [serialPort, setSerialPort] = useState<any>(null);
   const [catTestResult, setCatTestResult] = useState<string | null>(null);
   
@@ -278,6 +288,7 @@ export default function App() {
   // Refs for Worker Access
   const myCallRef = useRef<string>(myCall);
   const targetCallRef = useRef<string>('');
+  const txPeriodRef = useRef<number>(txPeriod);
   
   useEffect(() => {
     myCallRef.current = myCall;
@@ -286,6 +297,10 @@ export default function App() {
   useEffect(() => {
     targetCallRef.current = targetCall;
   }, [targetCall]);
+
+  useEffect(() => {
+    txPeriodRef.current = txPeriod;
+  }, [txPeriod]);
 
   // Core References
 
@@ -678,8 +693,8 @@ export default function App() {
         periodState.lastPeriod = currentPeriod;
         periodState.decodedThisPeriod = false;
         
-        // Start TX exactly at 0.0s if queued
-        if (queuedTxMessageRef.current && txEnabled) {
+        // Start TX exactly at 0.0s if queued and matches selected period
+        if (queuedTxMessageRef.current && txEnabled && currentPeriod % 2 === txPeriodRef.current) {
             const message = queuedTxMessageRef.current;
             queuedTxMessageRef.current = null;
             setIsTxQueued(false);
@@ -814,6 +829,13 @@ export default function App() {
               >
                   <Settings size={14} />
               </button>
+              <button
+                onClick={() => setShowAbout(true)}
+                className="px-2 border border-border-input bg-btn hover:bg-btn-hover rounded flex items-center justify-center text-text-muted hover:text-text-main transition-colors"
+                title="About / Help"
+              >
+                  <HelpCircle size={14} />
+              </button>
             </div>
           </div>
 
@@ -859,28 +881,42 @@ export default function App() {
       </header>
 
       {/* --- Band Selection Bar --- */}
-      <div 
-        className="bg-panel rounded-lg border border-border-subtle p-1.5 mb-3 flex gap-2 overflow-x-auto shadow-sm"
-        style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-      >
-        <style>{`.band-control-bar::-webkit-scrollbar { display: none; }`}</style>
-        {BAND_FREQS.map(band => {
-          // If within 2kHz of standard FT8 frequency, consider it active
-          const isActive = Math.abs(vfoFreq - band.hz) < 2000;
-          return (
-            <button
-              key={band.label}
-              onClick={() => selectBand(band.hz)}
-              className={`px-5 py-1.5 rounded-full text-[11px] uppercase tracking-wider font-bold transition-colors whitespace-nowrap shrink-0 ${
-                isActive 
-                  ? 'bg-blue-600 text-white shadow-[0_0_8px_rgba(37,99,235,0.8)] border border-blue-400' 
-                  : 'bg-btn text-text-muted border border-transparent hover:bg-btn-hover hover:text-text-main'
-              }`}
-            >
-              {band.label}
-            </button>
-          );
-        })}
+      <div className="bg-panel rounded-lg border border-border-subtle p-1.5 mb-3 flex items-center justify-between shadow-sm gap-2">
+        <div 
+          className="flex gap-2 overflow-x-auto band-control-bar flex-1 min-w-0 pr-4 lg:border-r border-border-subtle shrink"
+          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+        >
+          <style>{`.band-control-bar::-webkit-scrollbar { display: none; }`}</style>
+          {BAND_FREQS.map(band => {
+            // If within 2kHz of standard FT8 frequency, consider it active
+            const isActive = Math.abs(vfoFreq - band.hz) < 2000;
+            return (
+              <button
+                key={band.label}
+                onClick={() => selectBand(band.hz)}
+                className={`px-5 py-1.5 rounded-full text-[11px] uppercase tracking-wider font-bold transition-colors whitespace-nowrap shrink-0 ${
+                  isActive 
+                    ? 'bg-blue-600 text-white shadow-[0_0_8px_rgba(37,99,235,0.8)] border border-blue-400' 
+                    : 'bg-btn text-text-muted border border-transparent hover:bg-btn-hover hover:text-text-main'
+                }`}
+              >
+                {band.label}
+              </button>
+            );
+          })}
+        </div>
+        
+        {/* PTT Period Toggle */}
+        <button
+          onClick={() => setTxPeriod(p => p === 0 ? 1 : 0)}
+          className={`shrink-0 px-4 py-1.5 rounded text-[11px] font-mono uppercase font-bold border transition-colors ${
+            txPeriod === 0 
+              ? 'bg-[#0f2e1b] text-green-400 border-green-800 hover:bg-[#154628]' 
+              : 'bg-[#3d1f05] text-amber-500 border-amber-700 hover:bg-[#5a2e07]'
+          }`}
+        >
+          Tx: {txPeriod === 0 ? 'Even (:00)' : 'Odd (:15)'}
+        </button>
       </div>
 
       {/* Main Working Environment */}
@@ -927,6 +963,11 @@ export default function App() {
                       const parts = log.message.split(' ');
                       if(parts[0] === 'CQ') setTargetCall(parts[1]); 
                       else setTargetCall(parts[0]);
+                      
+                      // Auto-set TX period to the OPPOSITE of the caller's period
+                      const seconds = parseInt(log.time.substring(4, 6), 10);
+                      const callerPeriod = Math.floor(seconds / 15) % 2; // 0 for even, 1 for odd
+                      setTxPeriod(callerPeriod === 0 ? 1 : 0);
                     }}
                     className="grid grid-cols-[55px_40px_60px_1fr] gap-2 hover:bg-btn cursor-pointer p-1 rounded transition-colors group text-[11px] items-center"
                   >
@@ -978,6 +1019,13 @@ export default function App() {
                       const parts = log.message.split(' ');
                       if(parts[0] === 'CQ') setTargetCall(parts[1]); 
                       else if (!log.isTx) setTargetCall(parts[0]);
+
+                      // If incoming message, set TX period to OPPOSITE of caller's period
+                      if (!log.isTx && log.time && log.time.length >= 6) {
+                        const seconds = parseInt(log.time.substring(4, 6), 10);
+                        const callerPeriod = Math.floor(seconds / 15) % 2;
+                        setTxPeriod(callerPeriod === 0 ? 1 : 0);
+                      }
                     }}
                     className="grid grid-cols-[55px_40px_60px_1fr] gap-2 hover:bg-btn cursor-pointer p-1 rounded transition-colors group text-[11px] items-center"
                   >
@@ -1290,6 +1338,56 @@ export default function App() {
                   className="bg-green-600 dark:bg-[#4caf50] hover:bg-green-600 text-black px-6 py-2 rounded text-xs font-bold uppercase tracking-widest"
                 >
                   Save & Close
+                </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAbout && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-4">
+          <div className="bg-panel border border-border-subtle p-6 rounded-lg shadow-2xl w-full max-w-md max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-sm font-bold uppercase tracking-widest text-text-main">About FT8 Web Client</h2>
+              <button onClick={() => setShowAbout(false)} className="text-text-muted hover:text-text-main">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="space-y-4 text-xs text-text-main leading-relaxed">
+              <p>Welcome to the Web FT8 Client! This application runs entirely in your browser using the Web Audio API.</p>
+              
+              <div>
+                <h3 className="font-bold text-green-600 dark:text-[#4caf50] mb-1">1. Audio Setup</h3>
+                <p>Click "ACTIVATE AUDIO" and allow browser permissions to use the microphone. Adjust your computer's input volume so the <strong>Input Level (VU)</strong> sits in the green/yellow zone, avoiding the red to prevent clipping.</p>
+              </div>
+
+              <div>
+                <h3 className="font-bold text-green-600 dark:text-[#4caf50] mb-1">2. Configuration</h3>
+                <p>Open the <strong>Settings</strong> to set your Call Sign and Grid Square and configure CAT control.</p>
+              </div>
+
+              <div>
+                <h3 className="font-bold text-green-600 dark:text-[#4caf50] mb-1">3. Operations</h3>
+                <p>Select your band using the pill buttons. If CAT is configured, this will change the radio's VFO and poll its frequency.</p>
+                <p>FT8 relies strictly on synchronized UTC time. Verify your system clock is accurate. Decodes appear automatically at the :00, :15, :30, and :45 marks.</p>
+                <p>Enable TX by pressing Enable TX button. If you initiate a connection manually via CQ or answer from Band Activity, it will wait for the synchronization boundary to transmit.</p>
+              </div>
+
+              <div className="pt-4 mt-4 border-t border-border-subtle">
+                <h3 className="font-bold text-green-600 dark:text-[#4caf50] mb-1">Credits & License</h3>
+                <p className="mb-2">Created by <strong>Ondřej Koloničný, OK1CDJ</strong>.</p>
+                <p className="mb-2">This application utilizes the <a href="https://github.com/e04/ft8ts" target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 underline">ft8ts</a> library for FT8 decoding and encoding.</p>
+                <p>Licensed under the <strong>GNU General Public License v3.0 (GPL-3.0)</strong>.</p>
+              </div>
+            </div>
+
+            <div className="mt-8 flex justify-end">
+                <button 
+                  onClick={() => setShowAbout(false)}
+                  className="bg-app border border-border-input hover:bg-btn text-text-main px-6 py-2 rounded text-xs font-bold uppercase tracking-widest transition-colors"
+                >
+                  Close
                 </button>
             </div>
           </div>
