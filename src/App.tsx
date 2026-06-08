@@ -40,6 +40,13 @@ export default function App() {
       const saved = localStorage.getItem('ft8_decodeDepth');
       return saved ? Number(saved) : 2;
   });
+  const [maxRetries, setMaxRetries] = useState<number>(() => {
+      const saved = localStorage.getItem('ft8_maxRetries');
+      return saved ? Number(saved) : 4;
+  });
+  const [finalMessageMode, setFinalMessageMode] = useState<'RR73'|'RRR'>(() => {
+      return (localStorage.getItem('ft8_finalMessageMode') as 'RR73'|'RRR') || 'RR73';
+  });
 
   const [decodeStats, setDecodeStats] = useState<{ count: number, durationMs: number } | null>(null);
 
@@ -96,7 +103,9 @@ export default function App() {
       localStorage.setItem('ft8_myGrid', myGrid);
       localStorage.setItem('ft8_txFreq', txFreq.toString());
       localStorage.setItem('ft8_decodeDepth', decodeDepth.toString());
-  }, [myCall, myGrid, txFreq, decodeDepth]);
+      localStorage.setItem('ft8_maxRetries', maxRetries.toString());
+      localStorage.setItem('ft8_finalMessageMode', finalMessageMode);
+  }, [myCall, myGrid, txFreq, decodeDepth, maxRetries, finalMessageMode]);
 
   // UI State
   const [showSettings, setShowSettings] = useState(false);
@@ -928,6 +937,30 @@ export default function App() {
                   <option value="1">1 - Fast (Normal)</option>
                   <option value="2">2 - Deep (Slower, Decodes more)</option>
                   <option value="3">3 - Max (Slowest, Decodes weak signals)</option>
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] uppercase tracking-widest text-text-muted">Max Retries</label>
+                <input 
+                  type="number" 
+                  min="0"
+                  max="10"
+                  value={maxRetries} 
+                  onChange={e => setMaxRetries(Number(e.target.value))} 
+                  className="bg-app border border-border-input rounded px-3 py-2 text-sm font-mono w-full focus:outline-none focus:border-[#4caf50] text-text-main" 
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] uppercase tracking-widest text-text-muted">Final Message Mode</label>
+                <select 
+                  value={finalMessageMode}
+                  onChange={e => setFinalMessageMode(e.target.value as 'RR73' | 'RRR')}
+                  className="bg-app border border-border-input text-text-main rounded px-3 py-2 text-xs font-mono w-full focus:outline-none focus:border-[#4caf50]"
+                >
+                  <option value="RR73">RR73 (Standard, Faster)</option>
+                  <option value="RRR">RRR (Requires 73 from target)</option>
                 </select>
               </div>
 
