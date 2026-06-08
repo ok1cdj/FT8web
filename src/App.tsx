@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Activity, Settings, X } from 'lucide-react';
 import { getCaptureWorkletUrl } from './AudioWorkletBlob';
 import { encodeFT8 } from '@e04/ft8ts';
+import CatManager from './CatManager.js';
 
 export interface FT8DecodedMessage {
   time: string;
@@ -123,6 +124,53 @@ export default function App() {
 
   // UI State
   const [showSettings, setShowSettings] = useState(false);
+  const [serialPort, setSerialPort] = useState<any>(null);
+  const [catTestResult, setCatTestResult] = useState<string | null>(null);
+
+  const handleSelectSerialPort = async () => {
+    try {
+      if (!('serial' in navigator)) {
+        setCatTestResult("Web Serial API not supported in this browser. Try opening in a new tab or use Chrome/Edge.");
+        return;
+      }
+      const port = await (navigator as any).serial.requestPort();
+      setSerialPort(port);
+      setCatTestResult("Port selected successfully. Ready to test.");
+    } catch (e: any) {
+      console.error(e);
+      let errorMsg = "Error selecting port: " + e.message;
+      if (e.message?.includes('permission') || e.message?.includes('disallowed')) {
+          errorMsg += ". Try opening the app in a new tab.";
+      }
+      setCatTestResult(errorMsg);
+    }
+  };
+
+  const handleTestCat = async () => {
+    if (!serialPort) {
+      setCatTestResult("Please select a serial port first.");
+      return;
+    }
+    
+    const parsedAddr = parseInt(icomAddress, 16);
+    
+    try {
+      setCatTestResult("Testing connection...");
+      const cat = new CatManager({ 
+        mode: catMode, 
+        icomAddress: isNaN(parsedAddr) ? 0x94 : parsedAddr,
+        baudRate: catBaudRate
+      });
+      
+      await cat.connect(serialPort);
+      
+      const freq = await cat.getFrequency();
+      setCatTestResult(`Success! Freq: ${freq} Hz`);
+    } catch (e: any) {
+      console.error("CAT Test error:", e);
+      setCatTestResult("Error: " + e.message);
+    }
+  };
   
   // App State
   const [rxLog, setRxLog] = useState<FT8DecodedMessage[]>([]);
@@ -1029,6 +1077,31 @@ export default function App() {
                     className="bg-app border border-border-input rounded px-3 py-2 text-sm font-mono w-full focus:outline-none focus:border-[#4caf50] text-text-main uppercase" 
                     placeholder="94"
                   />
+                </div>
+              )}
+
+              {catMode !== 'manual' && (
+                <div className="flex flex-col gap-2 pt-2">
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={handleSelectSerialPort}
+                      className="flex-1 bg-app border border-border-input text-text-main hover:bg-[#4caf50] hover:text-white hover:border-[#4caf50] rounded px-3 py-2 text-xs font-mono font-bold transition-colors"
+                    >
+                      {serialPort ? 'Port Selected' : 'Select Serial Port'}
+                    </button>
+                    <button 
+                      onClick={handleTestCat}
+                      disabled={!serialPort}
+                      className="flex-1 bg-app border border-border-input text-text-main hover:bg-[#4caf50] hover:text-white hover:border-[#4caf50] disabled:opacity-50 disabled:hover:bg-app disabled:hover:border-border-input disabled:hover:text-text-main rounded px-3 py-2 text-xs font-mono font-bold transition-colors"
+                    >
+                      Test CAT
+                    </button>
+                  </div>
+                  {catTestResult && (
+                    <div className="text-[10px] font-mono text-center p-1 bg-app border border-border-subtle rounded text-text-muted">
+                      {catTestResult}
+                    </div>
+                  )}
                 </div>
               )}
 

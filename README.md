@@ -30,6 +30,7 @@ To use this application with a real transceiver, follow these steps:
 1. Load the application and click **"ACTIVATE AUDIO"**.
 2. Allow browser permissions to use the microphone/audio input.
 3. Open the **Settings** menu to format your Station Configuration, CAT Protocol overrides (Kenwood or Icom), and other preferences.
+   - *Note on CAT:* If setting up CAT control (via Web Serial API), you MUST open the app in a new tab for the browser to allow serial port access (due to iframe permissions). Once in a new tab, select your port and use "Test CAT" to verify frequency reading.
 4. Observe the **Input Level (VU)** indicator. Adjust your radio's output or your computer's input volume so the meter sits in the green/yellow zone (avoid clipping in the red).
 5. Watch the waterfall for FT8 signals. Decodes will appear at the :00, :15, :30, and :45 second marks in the UTC cycle.
 6. **CRITICAL:** Ensure your device's system clock is accurate (synchronized via NTP) as FT8 relies strictly on synchronized UTC time windows.

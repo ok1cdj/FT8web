@@ -57,7 +57,8 @@ class ManualDriver {
 // Variant B: Kenwood (ASCII Protocol)
 // ---------------------------------------------------------
 class KenwoodDriver {
-  constructor() {
+  constructor(baudRate = 57600) {
+    this.baudRate = baudRate;
     this.port = null;
     this.reader = null;
     this.writer = null;
@@ -70,7 +71,7 @@ class KenwoodDriver {
     if (!this.port.readable) {
         try {
             // Kenwood preferred baud rates are typically 38400 or 57600
-            await this.port.open({ baudRate: 57600 });
+            await this.port.open({ baudRate: this.baudRate });
         } catch (e) {
             console.log("Kenwood Port: ", e);
         }
@@ -156,8 +157,9 @@ class KenwoodDriver {
 // Variant C: Icom (CI-V Binary Protocol)
 // ---------------------------------------------------------
 class IcomDriver {
-  constructor(targetAddress = 0x94) {
+  constructor(targetAddress = 0x94, baudRate = 115200) {
     this.targetAddress = targetAddress; // IC-7300 default is 0x94, IC-705 is 0xA4
+    this.baudRate = baudRate;
     this.port = null;
     this.reader = null;
     this.writer = null;
@@ -170,7 +172,7 @@ class IcomDriver {
     this.port = port;
     if (!this.port.readable) {
         try {
-            await this.port.open({ baudRate: 115200 }); // Standard modern Icom rate
+            await this.port.open({ baudRate: this.baudRate }); // Standard modern Icom rate
         } catch (e) {
             console.log("Icom Port:", e);
         }
@@ -335,13 +337,14 @@ export default class CatManager {
   constructor(config = {}) {
     this.mode = config.mode || 'manual';
     const icomAddress = config.icomAddress || 0x94;
+    const baudRate = config.baudRate;
 
     switch (this.mode.toLowerCase()) {
       case 'kenwood':
-        this.driver = new KenwoodDriver();
+        this.driver = new KenwoodDriver(baudRate || 38400);
         break;
       case 'icom':
-        this.driver = new IcomDriver(icomAddress);
+        this.driver = new IcomDriver(icomAddress, baudRate || 115200);
         break;
       case 'manual':
       default:
