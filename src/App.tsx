@@ -13,6 +13,27 @@ export interface FT8DecodedMessage {
 }
 
 export default function App() {
+  const BAND_FREQS = [
+    { label: '80m', mhz: '3.5', hz: 3573000 },
+    { label: '40m', mhz: '7.0', hz: 7074000 },
+    { label: '30m', mhz: '10.1', hz: 10136000 },
+    { label: '20m', mhz: '14.0', hz: 14074000 },
+    { label: '17m', mhz: '18.1', hz: 18100000 },
+    { label: '15m', mhz: '21.0', hz: 21074000 },
+    { label: '12m', mhz: '24.9', hz: 24915000 },
+    { label: '10m', mhz: '28.0', hz: 28074000 },
+    { label: '6m', mhz: '50.3', hz: 50313000 }
+  ];
+
+  const [vfoFreq, setVfoFreq] = useState<number>(() => {
+    const saved = localStorage.getItem('ft8_vfoFreq');
+    return saved ? Number(saved) : 14074000;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('ft8_vfoFreq', vfoFreq.toString());
+  }, [vfoFreq]);
+
   // Global Audio State
   const [audioActive, setAudioActive] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
@@ -126,6 +147,81 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [serialPort, setSerialPort] = useState<any>(null);
   const [catTestResult, setCatTestResult] = useState<string | null>(null);
+  
+  const catRef = useRef<CatManager | null>(null);
+
+  // Auto-connect to previously permitted serial port if any
+  useEffect(() => {
+    if ('serial' in navigator && catMode !== 'manual') {
+      (navigator as any).serial.getPorts().then((ports: any[]) => {
+        if (ports.length > 0) {
+          setSerialPort(ports[0]);
+        }
+      }).catch(console.error);
+    }
+  }, []);
+
+  const initCatManager = async (port: any) => {
+    try {
+      const parsedAddr = parseInt(icomAddress, 16);
+      const cat = new CatManager({ 
+        mode: catMode, 
+        icomAddress: isNaN(parsedAddr) ? 0x94 : parsedAddr,
+        baudRate: catBaudRate
+      });
+      await cat.connect(port);
+      catRef.current = cat;
+      return cat;
+    } catch (e: any) {
+      console.error("CAT Init error:", e);
+      throw e;
+    }
+  };
+
+  // Poll CAT frequency
+  useEffect(() => {
+    if (!serialPort || catMode === 'manual') {
+      catRef.current = null;
+      return;
+    }
+
+    let interval: any;
+
+    const startPolling = () => {
+      interval = setInterval(() => {
+        if (catRef.current) {
+          catRef.current.getFrequency()
+            .then(freq => {
+              if (freq > 0) setVfoFreq(freq);
+            })
+            .catch(() => {});
+        }
+      }, 2000);
+    };
+
+    if (!catRef.current) {
+      initCatManager(serialPort)
+        .then(() => startPolling())
+        .catch(e => setCatTestResult("Auto-init error: " + e.message));
+    } else {
+      startPolling();
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [serialPort, catMode, catBaudRate, icomAddress]);
+
+  const selectBand = (hz: number) => {
+    setVfoFreq(hz);
+    if (catRef.current && catMode !== 'manual') {
+      catRef.current.setFrequency(hz).catch(e => console.error("CAT Set Freq Error:", e));
+    }
+  };
+
+  const formatFrequency = (hz: number) => {
+    return hz.toLocaleString('en-US').replace(/,/g, '.') + ' Hz';
+  };
 
   const handleSelectSerialPort = async () => {
     try {
@@ -135,6 +231,7 @@ export default function App() {
       }
       const port = await (navigator as any).serial.requestPort();
       setSerialPort(port);
+      catRef.current = null; // Forces re-init in the polling effect
       setCatTestResult("Port selected successfully. Ready to test.");
     } catch (e: any) {
       console.error(e);
@@ -152,20 +249,16 @@ export default function App() {
       return;
     }
     
-    const parsedAddr = parseInt(icomAddress, 16);
-    
     try {
       setCatTestResult("Testing connection...");
-      const cat = new CatManager({ 
-        mode: catMode, 
-        icomAddress: isNaN(parsedAddr) ? 0x94 : parsedAddr,
-        baudRate: catBaudRate
-      });
-      
-      await cat.connect(serialPort);
+      let cat = catRef.current;
+      if (!cat) {
+        cat = await initCatManager(serialPort);
+      }
       
       const freq = await cat.getFrequency();
       setCatTestResult(`Success! Freq: ${freq} Hz`);
+      setVfoFreq(freq);
     } catch (e: any) {
       console.error("CAT Test error:", e);
       setCatTestResult("Error: " + e.message);
@@ -739,6 +832,14 @@ export default function App() {
           </div>
         </div>
 
+        {/* --- RF Frequency Readout --- */}
+        <div className="flex flex-col items-center justify-center min-w-[180px]">
+          <span className="text-[10px] uppercase tracking-widest text-text-muted mb-1">Radio VFO</span>
+          <span className="text-[26px] font-mono font-bold text-green-600 dark:text-[#4caf50] leading-none tracking-tight">
+            {formatFrequency(vfoFreq)}
+          </span>
+        </div>
+
         <div className="flex flex-col items-center">
           <span className="text-[10px] uppercase tracking-widest text-text-muted mb-1">FT8 Window (15s Sync)</span>
           <div className="w-32 md:w-48 h-1.5 bg-black rounded-full border border-border-subtle relative overflow-hidden">
@@ -756,6 +857,31 @@ export default function App() {
           </span>
         </div>
       </header>
+
+      {/* --- Band Selection Bar --- */}
+      <div 
+        className="bg-panel rounded-lg border border-border-subtle p-1.5 mb-3 flex gap-2 overflow-x-auto shadow-sm"
+        style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+      >
+        <style>{`.band-control-bar::-webkit-scrollbar { display: none; }`}</style>
+        {BAND_FREQS.map(band => {
+          // If within 2kHz of standard FT8 frequency, consider it active
+          const isActive = Math.abs(vfoFreq - band.hz) < 2000;
+          return (
+            <button
+              key={band.label}
+              onClick={() => selectBand(band.hz)}
+              className={`px-5 py-1.5 rounded-full text-[11px] uppercase tracking-wider font-bold transition-colors whitespace-nowrap shrink-0 ${
+                isActive 
+                  ? 'bg-blue-600 text-white shadow-[0_0_8px_rgba(37,99,235,0.8)] border border-blue-400' 
+                  : 'bg-btn text-text-muted border border-transparent hover:bg-btn-hover hover:text-text-main'
+              }`}
+            >
+              {band.label}
+            </button>
+          );
+        })}
+      </div>
 
       {/* Main Working Environment */}
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-[400px]">
@@ -910,9 +1036,9 @@ export default function App() {
 
       {/* TX Operations Panel */}
       <footer className="bg-header border border-border-subtle rounded-lg p-4 shadow-inner mt-3">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-center">
+        <div className="flex flex-col lg:flex-row gap-4 items-center justify-between">
           
-          <div className="space-y-3 md:border-r border-border-subtle md:pr-4">
+          <div className="w-full lg:w-auto space-y-3 lg:border-r border-border-subtle lg:pr-6 shrink-0">
             <div className="flex flex-col">
               <label className="text-[9px] uppercase tracking-widest text-text-muted mb-1">My Station</label>
               <div className="flex items-center gap-2 cursor-pointer" onClick={() => setShowSettings(true)}>
@@ -927,7 +1053,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="md:col-span-2 grid grid-cols-2 sm:grid-cols-3 gap-2 px-0 md:px-2">
+          <div className="w-full lg:w-auto flex-1 grid grid-cols-2 gap-2 px-0 lg:px-4">
              <button 
                 onClick={() => transmitMessage(`CQ ${myCall} ${myGrid}`)}
                 disabled={!txEnabled || isTransmitting || isTxQueued}
@@ -944,24 +1070,17 @@ export default function App() {
                  Ans {targetCall || '...'}
              </button>
 
-              <button 
-                onClick={() => transmitMessage(`${targetCall} ${myCall} 73`)}
-                disabled={!txEnabled || !targetCall || isTransmitting || isTxQueued}
-                className="h-10 bg-btn border border-border-input hover:bg-btn-hover disabled:opacity-50 disabled:hover:bg-btn text-[10px] font-bold rounded uppercase tracking-wider transition-colors flex items-center justify-center gap-1"
-              >
-                 {targetCall || '...'} 73
-             </button>
              {(isTransmitting || isTxQueued) && (
-                <div className={`col-span-full mt-1 flex items-center justify-center gap-2 p-2 ${isTransmitting ? 'bg-rose-950/40 text-rose-400 border-rose-900 animate-pulse' : 'bg-amber-950/40 text-amber-500 border-amber-900'} border rounded font-bold text-[10px] uppercase tracking-widest`}>
+                <div className={`col-span-2 mt-1 flex items-center justify-center gap-2 p-2 ${isTransmitting ? 'bg-rose-950/40 text-rose-400 border-rose-900 animate-pulse' : 'bg-amber-950/40 text-amber-500 border-amber-900'} border rounded font-bold text-[10px] uppercase tracking-widest`}>
                     <Activity size={12} className={isTransmitting ? "" : "opacity-50"} /> {isTransmitting ? 'Transmitting...' : 'TX Queued...'}
                 </div>
              )}
           </div>
 
-          <div className="flex flex-col items-center justify-center md:pl-4 md:border-l border-border-subtle mt-4 md:mt-0">
+          <div className="w-full lg:w-auto flex flex-col items-center justify-center lg:pl-6 lg:border-l border-border-subtle mt-4 lg:mt-0 shrink-0">
             <button 
                onClick={() => setTxEnabled(!txEnabled)}
-               className={`w-full h-16 border rounded flex flex-col items-center justify-center gap-1 group transition-all active:scale-95 ${
+               className={`w-full lg:w-32 h-16 border rounded flex flex-col items-center justify-center gap-1 group transition-all active:scale-95 ${
                  txEnabled 
                    ? 'bg-[#2a0e0e] border-[#4a1a1a] hover:bg-[#3a1212] text-[#ff4444]'
                    : 'bg-btn border-border-input hover:bg-btn-hover text-text-muted'
@@ -972,7 +1091,7 @@ export default function App() {
                  <div className={`absolute left-0 top-0 w-3 h-2 rounded-full transition-all ${txEnabled ? 'bg-[#ff4444] shadow-[0_0_8px_#ff4444] translate-x-5' : 'bg-[#3a3d45]'}`}></div>
                </div>
             </button>
-            <p className="text-[8px] text-text-muted mt-2 italic text-center">Awaiting VOX sync at :00, :15, :30, :45</p>
+            <p className="text-[8px] text-text-muted mt-2 italic text-center w-full lg:w-32">Awaiting VOX sync at :00... :45</p>
           </div>
         </div>
       </footer>
