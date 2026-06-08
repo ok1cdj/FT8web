@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>FT8 FSM Mock Test Suite</title>
+    <style>
+        body { 
+            font-family: 'JetBrains Mono', monospace; 
+            background: #0d0e10; 
+            color: #e0e0e0; 
+            padding: 30px; 
+            line-height: 1.5;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        h1 { color: #4caf50; border-bottom: 1px solid #2a2c31; padding-bottom: 10px; }
+        h3 { color: #aaa; margin-top: 30px; }
+        .pass { color: #4caf50; font-weight: bold; background: rgba(76, 175, 80, 0.1); padding: 5px; border-radius: 4px; border-left: 4px solid #4caf50; margin: 4px 0; }
+        .fail { color: #ff5252; font-weight: bold; background: rgba(255, 82, 82, 0.1); padding: 5px; border-radius: 4px; border-left: 4px solid #ff5252; margin: 4px 0; }
+        .log-grid { display: flex; gap: 10px; margin: 10px 0; font-size: 13px; }
+        .log-col { flex: 1; border: 1px solid #2a2c31; padding: 10px; border-radius: 6px; background: #151619;}
+        .log-col strong { color: #8e9299; display: block; border-bottom: 1px dashed #2a2c31; margin-bottom: 5px;}
+        .event { color: #4fc3f7; }
+        .tx { color: #ffb74d; }
+        .rx { color: #81c784; }
+    </style>
+</head>
+<body>
+
+    <h1>FT8 FSM Mock Test Runner</h1>
+    <p>Executing standalone FSM tests over synthetic FT8 environments...</p>
+
+    <div id="results"></div>
+
+    <script type="module">
+        import FT8FSM from './FT8FSM.js';
+        
+        const resultsEl = document.getElementById('results');
+
+        function assert(condition, message) {
+            if (condition) {
+                resultsEl.innerHTML += `<div class="pass">✔ PASS: ${message}</div>`;
+            } else {
+                resultsEl.innerHTML += `<div class="fail">✖ FAIL: ${message}</div>`;
+                console.error(`Assertion failed: ${message}`);
+            }
+        }
+
+        function createSuiteLogger(testName) {
+            resultsEl.innerHTML += `<h3>${testName}</h3>`;
+            const wrapper = document.createElement('div');
+            wrapper.className = 'log-grid';
+            
+            const eventsCol = document.createElement('div');
+            eventsCol.className = 'log-col';
+            eventsCol.innerHTML = '<strong>Timeline Events</strong>';
+            
+            const uiCol = document.createElement('div');
+            uiCol.className = 'log-col';
+            uiCol.innerHTML = '<strong>UI QSO Log Output</strong>';
+            
+            wrapper.appendChild(eventsCol);
+            wrapper.appendChild(uiCol);
+            resultsEl.appendChild(wrapper);
+
+            return {
+                logEvent: (msg) => { eventsCol.innerHTML += `<div class="event">${msg}</div>`; },
+                logTx: (msg) => { eventsCol.innerHTML += `<div class="tx">Radio TX: ${msg}</div>`; },
+                logUi: (msg) => { uiCol.innerHTML += `<div>${msg}</div>`; },
+            };
+        }
+
+        // ==========================================
+        // TEST 1: Perfect QSO
+        // ==========================================
+        {
+            const l = createSuiteLogger('Test 1: Perfect QSO (Success Path)');
+            let fsm = new FT8FSM({ myCall: "OK1AAA", myGrid: "JN79", finalMessageMode: "RR73" });
+            fsm.isTxEnabled = true;
+
+            let sentTx = null;
+            fsm.onTransmit = (msg) => { sentTx = msg; l.logTx(msg); };
+            fsm.onAppendQsoLog = (msg) => l.logUi(msg);
+
+            // User clicks a CQ message and enables TX
+            l.logEvent("User selects target SP9BBB, state changes to REPLY_SENDING.");
+            fsm.currentState = "REPLY_SENDING";
+            fsm.targetCall = "SP9BBB";
+            fsm.targetGrid = "KO00";
+
+            // Next :00 period hits
+            l.logEvent("-> Clock hits Cycle 1 TX boundary (:00)");
+            fsm.onPeriodStart(0);
+            assert(sentTx === "SP9BBB OK1AAA JN79", "Cycle 1 accurately transmitted standard reply.");
+
+            // Deep in the cycle, decodes arrive
+            l.logEvent("-> Clock hits Cycle 1 RX boundary (:13)");
+            fsm.onPeriodDecodeReady(["OK1AAA SP9BBB -05"]); // Target sends a signal report to us
+            assert(fsm.currentState === "REPORT_SENDING", "FSM transitioned correctly to REPORT_SENDING upon receiving report.");
+
+            // Next :30 period hits
+            l.logEvent("-> Clock hits Cycle 2 TX boundary (:30)");
+            fsm.onPeriodStart(30);
+            assert(sentTx === "SP9BBB OK1AAA RR73", "Cycle 2 accurately transmitted final RR73 confirmation.");
+            assert(fsm.currentState === "IDLE", "FSM safely returned to IDLE to await next input.");
+        }
+
+        // ==========================================
+        // TEST 2: Target Fades Away
+        // ==========================================
+        {
+            const l = createSuiteLogger('Test 2: Target Fades Away (Timeout Path)');
+            let fsm = new FT8FSM({ myCall: "OK1AAA", myGrid: "JN79", maxRetries: 3 });
+            fsm.targetCall = "W1AW";
+            fsm.currentState = "REPORT_SENDING";
+
+            fsm.onAppendQsoLog = (msg) => l.logUi(msg);
+
+            l.logEvent("Simulating QSB (fade out) for 3 cycles...");
+            l.logEvent("- Cycle 1 RX decode drops...");
+            fsm.onPeriodDecodeReady(["W1AW DL2BBB -03"]); // Noise, not our callsign
+            assert(fsm.retryCount === 1, "Retry counter increments to 1.");
+
+            l.logEvent("- Cycle 2 RX decode drops...");
+            fsm.onPeriodDecodeReady(["ZZ9X XZ9Z R-10"]); // Noise
+            assert(fsm.retryCount === 2, "Retry counter increments to 2.");
+
+            l.logEvent("- Cycle 3 RX decode drops...");
+            fsm.onPeriodDecodeReady(["CQ DX OM3XYZ JN88"]); // Noise
+            assert(fsm.currentState === "IDLE", "FSM securely aborts the QSO on 3rd failure.");
+            assert(fsm.retryCount === 0, "FSM wipes retry count back to clean slate.");
+        }
+
+        // ==========================================
+        // TEST 3: Pile-Up Handling (Queue & Haversine)
+        // ==========================================
+        {
+            const l = createSuiteLogger('Test 3: Pile-up Handling (DX Priority Queue)');
+            let fsm = new FT8FSM({ myCall: "OK1AAA", myGrid: "JN79" });
+            fsm.currentState = "CQ_SENDING";
+            fsm.isTxEnabled = true;
+
+            fsm.onAppendQsoLog = (msg) => l.logUi(msg);
+
+            l.logEvent("FSM is in CQ_SENDING state. Wait for RX decodes...");
+            l.logEvent("3 stations answer the CQ simultaneously.");
+
+            // Run cycle
+            fsm.onPeriodDecodeReady([
+                "OK1AAA OM3XYZ JN88", // Close: ~140km
+                "OK1AAA DL2BBB JO31", // Medium: ~700km
+                "OK1AAA W1AW FN34"    // Far DX: ~6300km
+            ]);
+
+            assert(fsm.targetCall === "W1AW", "FSM selected W1AW as the primary active target.");
+            assert(fsm.currentState === "REPORT_SENDING", "FSM immediately pivoted to REPORT_SENDING for active QSO.");
+            assert(fsm.callerQueue.length === 2, "Callers securely stacked into the hold queue.");
+            
+            // Validate the sorting mathematically
+            assert(fsm.callerQueue[0].callsign === "DL2BBB", "Nearest queue entry is correct medium-distance priority.");
+            assert(fsm.callerQueue[1].callsign === "OM3XYZ", "Final queue entry is the lowest priority distance.");
+        }
+
+    </script>
+</body>
+</html>
