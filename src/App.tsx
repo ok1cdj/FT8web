@@ -1146,7 +1146,7 @@ export default function App() {
 
       {showSettings && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-4">
-          <div className="bg-panel border border-border-subtle p-6 rounded-lg shadow-2xl w-full max-w-md">
+          <div className="bg-panel border border-border-subtle p-6 rounded-lg shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-sm font-bold uppercase tracking-widest text-text-main">Station Configuration</h2>
               <button onClick={() => setShowSettings(false)} className="text-text-muted hover:text-text-main">
@@ -1346,7 +1346,7 @@ export default function App() {
 
       {showAbout && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-4">
-          <div className="bg-panel border border-border-subtle p-6 rounded-lg shadow-2xl w-full max-w-md max-h-[80vh] overflow-y-auto">
+          <div className="bg-panel border border-border-subtle p-6 rounded-lg shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-sm font-bold uppercase tracking-widest text-text-main">About FT8 Web Client</h2>
               <button onClick={() => setShowAbout(false)} className="text-text-muted hover:text-text-main">

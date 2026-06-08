@@ -1,0 +1,18 @@
+{
+  "name": "FT8Web Portable Transceiver",
+  "short_name": "FT8Web",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#111111",
+  "theme_color": "#111111",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "description": "Offline-first HTML5/JavaScript FT8 amateur radio application."
+}
