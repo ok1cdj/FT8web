@@ -8,6 +8,11 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#111111" />
+    <!-- Web Serial API Polyfill for Android compatibility via WebUSB mapping -->
+    <script type="module">
+      import { serial } from 'https://unpkg.com/web-serial-polyfill/dist/serial.js';
+      window.webSerialPolyfill = serial;
+    </script>
   </head>
   <body>
     <div id="root"></div>
