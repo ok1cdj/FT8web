@@ -117,8 +117,8 @@ export default function App() {
       return (localStorage.getItem('ft8_finalMessageMode') as 'RR73'|'RRR') || 'RR73';
   });
 
-  const [catMode, setCatMode] = useState<'manual'|'kenwood'|'icom'>(() => {
-    return (localStorage.getItem('ft8_catMode') as 'manual'|'kenwood'|'icom') || 'manual';
+  const [catMode, setCatMode] = useState<'manual'|'kenwood'|'qdx'|'icom'>(() => {
+    return (localStorage.getItem('ft8_catMode') as 'manual'|'kenwood'|'qdx'|'icom') || 'manual';
   });
   const [catBaudRate, setCatBaudRate] = useState<number>(() => {
     const saved = localStorage.getItem('ft8_catBaudRate');
@@ -389,22 +389,14 @@ export default function App() {
     txFreqRef.current = txFreq;
   }, [txFreq]);
 
-  // Synchronize serial CAT PTT keying precisely with the isTransmitting state
+  // Component unmount PTT cleanup
   useEffect(() => {
-    const currentCat = catRef.current;
-    if (currentCat && catMode !== 'manual') {
-      console.log(`[CAT PTT] Setting transceiver PTT state: ${isTransmitting}`);
-      currentCat.setTx(isTransmitting).catch((err: any) => {
-        console.error("CAT setTx PTT error:", err);
-      });
-    }
     return () => {
-      if (currentCat && catMode !== 'manual') {
-        console.log(`[CAT PTT] Safe RX cleanup active`);
-        currentCat.setTx(false).catch(() => {});
+      if (catRef.current && catMode !== 'manual') {
+        catRef.current.setTx(false).catch(() => {});
       }
     };
-  }, [isTransmitting, catMode]);
+  }, [catMode]);
 
   // Refs for Worker Access
   const myCallRef = useRef<string>(myCall);
@@ -436,6 +428,89 @@ export default function App() {
   const txSourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
   const queuedTxMessageRef = useRef<string | null>(null);
 
+  const startTx = useCallback(async (message: string) => {
+    setIsTransmitting(true);
+    
+    // Add to QSO Log (only if not handled automatically by FSM)
+    if (!autoSequenceRef.current) {
+        setQsoLog(prev => {
+            const now = new Date();
+            const nowString = now.toISOString().substring(11, 19).replace(/:/g, '');
+            return [{
+                time: nowString,
+                snr: 0,
+                freq: txFreqRef.current,
+                message: "-> " + message,
+                isTx: true
+            }, ...prev].slice(0, 100);
+        });
+    }
+
+    let audioFreq = txFreqRef.current;
+    if (catRef.current && catMode !== 'manual') {
+        try {
+            console.log(`[CAT TX] Keying transceiver with waterfall freq ${txFreqRef.current} Hz`);
+            const retFreq = await catRef.current.setTx(true, txFreqRef.current);
+            if (typeof retFreq === 'number') {
+                audioFreq = retFreq;
+                console.log(`[CAT TX] "Fake Split" center optimization active. Transmit audio modulated to ${audioFreq} Hz`);
+            }
+        } catch (err: any) {
+            console.error("[CAT TX] PTT keying failed:", err);
+        }
+    }
+
+    const ctx = audioCtxRef.current;
+    if (ctx && ctx.state !== 'suspended') {
+        if (typeof (ctx as any).setSinkId === 'function') {
+            (ctx as any).setSinkId(selectedOutputDeviceId).catch((e: any) => console.error("setSinkId fail:", e));
+        }
+        
+        try {
+            // Generate the FT8 waveform for 15 seconds
+            const audioData = encodeFT8(message, { 
+              sampleRate: ctx.sampleRate,
+              baseFrequency: audioFreq 
+            });
+            
+            const audioBuffer = ctx.createBuffer(1, audioData.length, ctx.sampleRate);
+            audioBuffer.copyToChannel(audioData, 0);
+            
+            const sourceNode = ctx.createBufferSource();
+            sourceNode.buffer = audioBuffer;
+            
+            const gain = ctx.createGain();
+            gain.gain.setValueAtTime(1, ctx.currentTime);
+            
+            sourceNode.connect(gain);
+            gain.connect(ctx.destination);
+            
+            sourceNode.start(ctx.currentTime);
+            txSourceNodeRef.current = sourceNode;
+            
+            sourceNode.onended = () => {
+                setIsTransmitting(false);
+                txSourceNodeRef.current = null;
+                if (catRef.current && catMode !== 'manual') {
+                    console.log("[CAT TX] Transmission complete, unkeying standard...");
+                    catRef.current.setTx(false).catch((err: any) => console.error("CAT setTx RX error:", err));
+                }
+            };
+        } catch (err) {
+            console.error("FT8 Encoding Error:", err);
+            setIsTransmitting(false);
+            if (catRef.current && catMode !== 'manual') {
+                catRef.current.setTx(false).catch(() => {});
+            }
+        }
+    } else {
+        setIsTransmitting(false);
+        if (catRef.current && catMode !== 'manual') {
+            catRef.current.setTx(false).catch(() => {});
+        }
+    }
+  }, [catMode, selectedOutputDeviceId]);
+
   // Clean up any active TX
   const stopTx = useCallback(() => {
     queuedTxMessageRef.current = null;
@@ -450,7 +525,10 @@ export default function App() {
     }
     setIsTransmitting(false);
     setIsTxQueued(false);
-  }, []);
+    if (catRef.current && catMode !== 'manual') {
+        catRef.current.setTx(false).catch((err: any) => console.error("CAT setTx RX error:", err));
+    }
+  }, [catMode]);
 
   // Monitor txEnabled toggle for stopping TX
   useEffect(() => {
@@ -947,61 +1025,7 @@ export default function App() {
             const message = queuedTxMessageRef.current;
             queuedTxMessageRef.current = null;
             setIsTxQueued(false);
-            setIsTransmitting(true);
-            
-            // Add to QSO Log (only if not handled automatically by FSM)
-            if (!autoSequence) {
-                setQsoLog(prev => {
-                    const nowString = now.toISOString().substring(11, 19).replace(/:/g, '');
-                    return [{
-                        time: nowString,
-                        snr: 0,
-                        freq: txFreq,
-                        message: "-> " + message,
-                        isTx: true
-                    }, ...prev].slice(0, 100);
-                });
-            }
-            
-            const ctx = audioCtxRef.current;
-            if (ctx && ctx.state !== 'suspended') {
-                if (typeof (ctx as any).setSinkId === 'function') {
-                    (ctx as any).setSinkId(selectedOutputDeviceId).catch((e: any) => console.error("setSinkId fail:", e));
-                }
-                
-                try {
-                    // Generate the FT8 waveform for 15 seconds
-                    const audioData = encodeFT8(message, { 
-                      sampleRate: ctx.sampleRate,
-                      baseFrequency: txFreq 
-                    });
-                    
-                    const audioBuffer = ctx.createBuffer(1, audioData.length, ctx.sampleRate);
-                    audioBuffer.copyToChannel(audioData, 0);
-                    
-                    const sourceNode = ctx.createBufferSource();
-                    sourceNode.buffer = audioBuffer;
-                    
-                    const gain = ctx.createGain();
-                    gain.gain.setValueAtTime(1, ctx.currentTime);
-                    
-                    sourceNode.connect(gain);
-                    gain.connect(ctx.destination);
-                    
-                    sourceNode.start(ctx.currentTime);
-                    txSourceNodeRef.current = sourceNode;
-                    
-                    sourceNode.onended = () => {
-                        setIsTransmitting(false);
-                        txSourceNodeRef.current = null;
-                    };
-                } catch (err) {
-                    console.error("FT8 Encoding Error:", err);
-                    setIsTransmitting(false);
-                }
-            } else {
-                setIsTransmitting(false);
-            }
+            startTx(message);
         }
         
         // Clear RX buffer for the new recording period
@@ -1584,11 +1608,12 @@ export default function App() {
                 <label className="text-[10px] uppercase tracking-widest text-text-muted">Protocol Mode</label>
                 <select 
                   value={catMode}
-                  onChange={e => setCatMode(e.target.value as 'manual' | 'kenwood' | 'icom')}
+                  onChange={e => setCatMode(e.target.value as 'manual' | 'kenwood' | 'qdx' | 'icom')}
                   className="bg-app border border-border-input text-text-main rounded px-3 py-2 text-xs font-mono w-full focus:outline-none focus:border-[#4caf50]"
                 >
                   <option value="manual">Manual (No CAT / iOS)</option>
-                  <option value="kenwood">Kenwood / QDX</option>
+                  <option value="kenwood">Kenwood</option>
+                  <option value="qdx">QDX (Kenwood compatible)</option>
                   <option value="icom">Icom (CI-V)</option>
                 </select>
               </div>

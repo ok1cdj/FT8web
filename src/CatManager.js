@@ -43,9 +43,9 @@ class ManualDriver {
     // Safely resolve immediately
     return Promise.resolve();
   }
-  async setTx(isTxActive) {
-    // Safely resolve immediately
-    return Promise.resolve();
+  async setTx(isTxActive, userAudioFreq = 1500) {
+    // Safely resolve immediately and return optimized audio frequency
+    return Promise.resolve(isTxActive ? userAudioFreq : null);
   }
   async getFrequency() {
     // Doesn't interact with hardware
@@ -70,6 +70,8 @@ class KenwoodDriver {
     this.encoder = new TextEncoder();
     this.decoder = new TextDecoder();
     this.isActive = false;
+    this.rxFrequency = 14074000; // Baseline frequency default
+    this.vfoOffset = 0; // Current active offset
   }
 
   async connect(port) {
@@ -138,6 +140,9 @@ class KenwoodDriver {
     if (msg.startsWith("FA") && msg.length >= 13) {
       const freqStr = msg.substring(2, 13);
       const freq = parseInt(freqStr, 10);
+      if (!this.vfoOffset || this.vfoOffset === 0) {
+        this.rxFrequency = freq;
+      }
       if (this.pendingFreqResolvers.length > 0) {
         const resolve = this.pendingFreqResolvers.shift();
         resolve(freq);
@@ -146,18 +151,56 @@ class KenwoodDriver {
   }
 
   async setFrequency(freqHz) {
+    this.rxFrequency = freqHz; // Store the baseline RX frequency
     if (!this.writer) return;
     // FA needs 11 digits padded with leading zeros
     const freqStr = freqHz.toString().padStart(11, '0');
     await this.writer.write(this.encoder.encode(`FA${freqStr};`));
   }
 
-  async setTx(isTxActive) {
-    if (!this.writer) return;
+  async setTx(isTxActive, userAudioFreq = 1500) {
+    if (!this.writer) return isTxActive ? userAudioFreq : null;
+    
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
     if (isTxActive) {
+      // 1. Calculate vfoOffset and txAudioFreq
+      const vfoOffset = Math.round((userAudioFreq - 1500) / 500) * 500;
+      const txAudioFreq = userAudioFreq - vfoOffset;
+      const txVfoFreq = this.rxFrequency + vfoOffset;
+
+      // 2. Store offset state
+      this.vfoOffset = vfoOffset;
+
+      // 3. Command radio to retune VFO if offset is not 0
+      if (this.vfoOffset !== 0) {
+        const freqStr = txVfoFreq.toString().padStart(11, '0');
+        await this.writer.write(this.encoder.encode(`FA${freqStr};`));
+      }
+
+      // 4. Minor hardware settling delay
+      await sleep(50);
+
+      // 5. Send PTT command to start transmitting
       await this.writer.write(this.encoder.encode('TX;'));
+
+      // 6. Return recalculated audio frequency
+      return txAudioFreq;
     } else {
+      // 1. Immediately stop transmitting
       await this.writer.write(this.encoder.encode('RX;'));
+
+      // 2. If vfoOffset was not 0, delay and retune back
+      if (this.vfoOffset !== 0) {
+        await sleep(50);
+        const freqStr = this.rxFrequency.toString().padStart(11, '0');
+        await this.writer.write(this.encoder.encode(`FA${freqStr};`));
+      }
+
+      // 3. Reset offset state
+      this.vfoOffset = 0;
+
+      return null;
     }
   }
 
@@ -232,6 +275,8 @@ class IcomDriver {
     this.lastTransmittedBytes = [];
     this.pendingFreqResolvers = [];
     this.isActive = false;
+    this.rxFrequency = 14074000; // Baseline frequency default
+    this.vfoOffset = 0; // Current active offset
   }
 
   async connect(port) {
@@ -357,6 +402,9 @@ class IcomDriver {
     if (cmd === 0x03 && frame.length >= 10) {
         const bcdData = frame.slice(5, 10);
         const freq = bcdToFreq(bcdData);
+        if (!this.vfoOffset || this.vfoOffset === 0) {
+          this.rxFrequency = freq;
+        }
         if (this.pendingFreqResolvers.length > 0) {
           const resolve = this.pendingFreqResolvers.shift();
           resolve(freq);
@@ -383,15 +431,56 @@ class IcomDriver {
   }
 
   async setFrequency(freqHz) {
+    this.rxFrequency = freqHz; // Save baseline
     const bcd = freqToBCD(freqHz);
     // Command 0x05: Set frequency. No sub-command.
     await this.sendFrame(0x05, null, bcd);
   }
 
-  async setTx(isTxActive) {
-    const actionByte = isTxActive ? 0x01 : 0x00;
-    // Command 0x1C: Transceiver Control. Sub 0x00: Transmit.
-    await this.sendFrame(0x1C, 0x00, [actionByte]);
+  async setTx(isTxActive, userAudioFreq = 1500) {
+    if (!this.writer) return isTxActive ? userAudioFreq : null;
+
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+    if (isTxActive) {
+      // 1. Calculate vfoOffset and txAudioFreq
+      const vfoOffset = Math.round((userAudioFreq - 1500) / 500) * 500;
+      const txAudioFreq = userAudioFreq - vfoOffset;
+      const txVfoFreq = this.rxFrequency + vfoOffset;
+
+      // 2. Store offset
+      this.vfoOffset = vfoOffset;
+
+      // 3. Command the radio to retune VFO
+      if (this.vfoOffset !== 0) {
+        const bcd = freqToBCD(txVfoFreq);
+        await this.sendFrame(0x05, null, bcd);
+      }
+
+      // 4. Hardware settling delay
+      await sleep(50);
+
+      // 5. Send PTT command to start transmitting
+      await this.sendFrame(0x1C, 0x00, [0x01]);
+
+      // 6. Return recalculated audio frequency
+      return txAudioFreq;
+    } else {
+      // 1. Immediately stop transmitting (unkey radio)
+      await this.sendFrame(0x1C, 0x00, [0x00]);
+
+      // 2. If vfoOffset was not 0, delay and retune back
+      if (this.vfoOffset !== 0) {
+        await sleep(50);
+        const bcd = freqToBCD(this.rxFrequency);
+        await this.sendFrame(0x05, null, bcd);
+      }
+
+      // 3. Reset state
+      this.vfoOffset = 0;
+
+      return null;
+    }
   }
 
   async getFrequency() {
@@ -454,12 +543,169 @@ class IcomDriver {
 }
 
 // ---------------------------------------------------------
+// Variant D: QDX (Kenwood Clone for now)
+// ---------------------------------------------------------
+class QDXDriver {
+  constructor(baudRate = 57600) {
+    this.baudRate = baudRate;
+    this.port = null;
+    this.reader = null;
+    this.writer = null;
+    this.buffer = "";
+    this.pendingFreqResolvers = [];
+    this.encoder = new TextEncoder();
+    this.decoder = new TextDecoder();
+    this.isActive = false;
+  }
+
+  async connect(port) {
+    if (!port) {
+      throw new Error("No serial port provided for QDX connection");
+    }
+    this.port = port;
+    if (!this.port.readable) {
+        try {
+            await this.port.open({ baudRate: this.baudRate });
+        } catch (e) {
+            console.error("QDX Port open error: ", e);
+            throw new Error(`Failed to open QDX CAT port (${e.message || e})`);
+        }
+    }
+    
+    if (!this.port.readable || !this.port.writable) {
+        throw new Error("QDX serial port opened but readable/writable streams are unavailable. Ensure another app is not using this port.");
+    }
+    
+    try {
+        if (this.port && typeof this.port.setSignals === 'function') {
+            await this.port.setSignals({ dataTerminalReady: false, requestToSend: false });
+            console.log("[CatManager] Forced QDX RTS & DTR OFF on connect");
+        }
+    } catch (sigErr) {
+        console.warn("[CatManager] Failed to set signals on connect:", sigErr);
+    }
+    
+    this.reader = this.port.readable.getReader();
+    this.writer = this.port.writable.getWriter();
+    this.isActive = true;
+    
+    this.readLoop();
+  }
+
+  async readLoop() {
+    try {
+      while (this.isActive) {
+        const { value, done } = await this.reader.read();
+        if (done || !this.isActive) break;
+        if (value) {
+          const text = this.decoder.decode(value);
+          this.buffer += text;
+          let semiIndex;
+          while ((semiIndex = this.buffer.indexOf(';')) !== -1) {
+            const msg = this.buffer.substring(0, semiIndex + 1);
+            this.buffer = this.buffer.substring(semiIndex + 1);
+            this.handleMessage(msg);
+          }
+        }
+      }
+    } catch (e) {
+      if (this.isActive) {
+        console.error("QDX Read Loop Error:", e);
+      }
+    }
+  }
+
+  handleMessage(msg) {
+    if (msg.startsWith("FA") && msg.length >= 13) {
+      const freqStr = msg.substring(2, 13);
+      const freq = parseInt(freqStr, 10);
+      if (this.pendingFreqResolvers.length > 0) {
+        const resolve = this.pendingFreqResolvers.shift();
+        resolve(freq);
+      }
+    }
+  }
+
+  async setFrequency(freqHz) {
+    if (!this.writer) return;
+    const freqStr = freqHz.toString().padStart(11, '0');
+    await this.writer.write(this.encoder.encode(`FA${freqStr};`));
+  }
+
+  async setTx(isTxActive, userAudioFreq = 1500) {
+    if (!this.writer) return isTxActive ? userAudioFreq : null;
+    if (isTxActive) {
+      await this.writer.write(this.encoder.encode('TX;'));
+      return userAudioFreq;
+    } else {
+      await this.writer.write(this.encoder.encode('RX;'));
+      return null;
+    }
+  }
+
+  async getFrequency() {
+    if (!this.writer) {
+      return Promise.reject(new Error("QDX port is not connected"));
+    }
+    return new Promise(async (resolve, reject) => {
+      this.pendingFreqResolvers.push(resolve);
+      try {
+        await this.writer.write(this.encoder.encode('FA;'));
+      } catch (writeErr) {
+        const idx = this.pendingFreqResolvers.indexOf(resolve);
+        if (idx > -1) this.pendingFreqResolvers.splice(idx, 1);
+        reject(writeErr);
+        return;
+      }
+      setTimeout(() => {
+        const idx = this.pendingFreqResolvers.indexOf(resolve);
+        if (idx > -1) {
+          this.pendingFreqResolvers.splice(idx, 1);
+          reject(new Error("Timeout reading QDX frequency"));
+        }
+      }, 1500);
+    });
+  }
+
+  async disconnect() {
+    this.isActive = false;
+    if (!this.port) return;
+    try {
+      if (this.reader) {
+        await this.reader.cancel().catch(() => {});
+        this.reader.releaseLock();
+      }
+    } catch (e) {
+      console.warn("QDX release lock error (reader):", e);
+    }
+    try {
+      if (this.writer) {
+        this.writer.releaseLock();
+      }
+    } catch (e) {
+      console.warn("QDX release lock error (writer):", e);
+    }
+    try {
+      if (this.port.readable || this.port.writable) {
+        await this.port.close().catch(() => {});
+      }
+    } catch (e) {
+      console.warn("QDX port close error:", e);
+    }
+    this.port = null;
+    this.reader = null;
+    this.writer = null;
+    this.buffer = "";
+  }
+}
+
+// ---------------------------------------------------------
 // Master Controller API
 // ---------------------------------------------------------
 export default class CatManager {
   /**
    * @param {Object} config 
-   * @param {string} config.mode - 'manual', 'kenwood', or 'icom'
+   * @param {string} config.mode - 'manual', 'kenwood', 'qdx', or 'icom'
    * @param {number} config.icomAddress - Hex address for the target ICOM radio (e.g. 0x94)
    */
   constructor(config = {}) {
@@ -470,6 +716,9 @@ export default class CatManager {
     switch (this.mode.toLowerCase()) {
       case 'kenwood':
         this.driver = new KenwoodDriver(baudRate || 38400);
+        break;
+      case 'qdx':
+        this.driver = new QDXDriver(baudRate || 57600);
         break;
       case 'icom':
         this.driver = new IcomDriver(icomAddress, baudRate || 115200);
@@ -498,11 +747,13 @@ export default class CatManager {
   }
 
   /**
-   * Toggles PTT (Transmit/Receive).
+   * Toggles PTT (Transmit/Receive) with split.
    * @param {boolean} isTxActive 
+   * @param {number} userAudioFreq 
+   * @returns {Promise<number|null>}
    */
-  async setTx(isTxActive) {
-    await this.driver.setTx(isTxActive);
+  async setTx(isTxActive, userAudioFreq = 1500) {
+    return await this.driver.setTx(isTxActive, userAudioFreq);
   }
 
   /**

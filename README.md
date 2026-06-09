@@ -5,7 +5,8 @@ A production-ready Amateur Radio FT8 client running entirely in the browser usin
 ## Features
 - **In-Browser Decoding/Encoding:** Uses a Web Worker to decode FT8 audio streams in the background without blocking the UI.
 - **Automated QSO State Machine:** Incorporates a robust Finite State Machine (FSM) to automatically manage the flow of your digital contacts (CQ, Grid, SNR Report, 73) and handle DX pile-up caller distance priority sorting.
-- **Web Serial CAT Control:** Direct browser-to-radio communication supporting Icom (CI-V) and Kenwood protocols for PTT and frequency control.
+- **Web Serial CAT Control:** Direct browser-to-radio communication supporting Kenwood, standard QDX, and Icom (CI-V) protocols for PTT and frequency control.
+- **"Fake Split" (Rig Split) Transmit Optimization:** Dynamically shifts the transceiver VFO frequency during transmission to keep the modulated audio frequency close to the 1500 Hz filter center. This prevents power roll-off and harmonic splatter near the SSB filter edges (0 Hz and 3000 Hz) while restoring the baseline VFO frequency upon return to RX.
 - **Band Activity & Active QSO:** Separated global logs and targeted incoming/outgoing QSO messages for clear visibility.
 - **Hardware VOX Compatible:** Audio generation uses a hard-start envelope to assure VOX will work natively as an alternative to CAT control.
 - **Live Waterfall:** Web Audio API AnalyserNode rendering a high-contrast waterfall focused tightly on the SSB filter bandwidth (0 Hz - 3000 Hz).
@@ -29,8 +30,10 @@ To use this application with a real transceiver, follow these steps:
 ### 3. Application Workflow
 1. Load the application and click **"ACTIVATE AUDIO"**.
 2. Allow browser permissions to use the microphone/audio input.
-3. Open the **Settings** menu to format your Station Configuration, CAT Protocol overrides (Kenwood or Icom), and other preferences.
+3. Open the **Settings** menu to format your Station Configuration, CAT Protocol overrides (Kenwood, Icom, or QDX), and other preferences.
    - *Note on CAT:* If setting up CAT control (via Web Serial API), you MUST open the app in a new tab for the browser to allow serial port access (due to iframe permissions). Once in a new tab, select your port and use "Test CAT" to verify frequency reading.
+   - *QDX Digital Transceiver Mode:* Choose **QDX** mode under CAT Protocol settings for a tailored Kenwood-cloned serial control profile matching standard hardware defaults (at 57600 baud rate).
+   - *Automated "Fake Split" (Rig Split):* When CAT is successfully connected in Kenwood or Icom modes, the system automatically uses a dual-stage asynchronous timing schedule during transmission. It dynamically increments/decrements your VFO frequency by blocks of 500 Hz while adjusting the Web Audio output tone proportionately. This ensures your transmitted audio stays locked within the cleanest center stage of your radio's SSB passband (at around 1500 Hz), preventing harmonic attenuation or clipping on the edges of the waterfall. Upon unkeying, the driver smoothly resets your radio's VFO back to its baseline frequency for reliable reception.
 4. Observe the **Input Level (VU)** indicator. Adjust your radio's output or your computer's input volume so the meter sits in the green/yellow zone (avoid clipping in the red).
 5. Watch the waterfall for FT8 signals. Decodes will appear at the :00, :15, :30, and :45 second marks in the UTC cycle.
 6. **CRITICAL:** Ensure your device's system clock is accurate (synchronized via NTP) as FT8 relies strictly on synchronized UTC time windows.
