@@ -501,9 +501,13 @@ export default function App() {
         if (e.data.durationMs !== undefined) {
             setDecodeStats({ count: e.data.count, durationMs: e.data.durationMs });
         }
-        if (e.data.payload.length > 0) {
+        
+        const payload = e.data.payload || [];
+        const decPeriodIndex = Math.floor(new Date().getUTCSeconds() / 15) % 2;
+
+        if (payload.length > 0) {
             setRxLog(prev => {
-                const timeString = e.data.payload[0].time;
+                const timeString = payload[0].time;
                 const formattedTime = timeString.length === 6 
                     ? `${timeString.substring(0,2)}:${timeString.substring(2,4)}:${timeString.substring(4,6)}` 
                     : timeString;
@@ -514,7 +518,7 @@ export default function App() {
                     message: `-------- ${formattedTime} UTC --------`,
                     isDivider: true
                 };
-                const newLog = [divider, ...e.data.payload, ...prev];
+                const newLog = [divider, ...payload, ...prev];
                 
                 // Keep only the last 4 periods (i.e., up to 4 dividers)
                 let dividerCount = 0;
@@ -530,38 +534,38 @@ export default function App() {
                 }
                 return filteredLog;
             });
-            
-            if (autoSequenceRef.current && fsmRef.current) {
-                fsmRef.current.onPeriodDecodeReady(e.data.payload);
-            } else {
-                // Route to QSO Log based on rules
-                const incomingQsoMessages = e.data.payload.filter((msg: FT8DecodedMessage) => {
-                    const myCall = myCallRef.current;
-                    const targetCall = targetCallRef.current;
-                    
-                    const parts = msg.message.trim().split(/\s+/);
-                    
-                    if (myCall && msg.message.includes(myCall)) return true;
-                    
-                    if (targetCall) {
-                        // Normalize parts to remove hashed call brackets like <W1AW> if present
-                        const cleanParts = parts.map(p => p.replace(/[<>]/g, ''));
-                        
-                        // Check if target is the transmitter (Source)
-                        if (cleanParts.length >= 2 && cleanParts[1] === targetCall) return true;
-                        // CQ/QRZ with modifier format: CQ DX W1AW FN34
-                        if (cleanParts.length >= 3 && (cleanParts[0] === 'CQ' || cleanParts[0] === 'QRZ') && cleanParts[2] === targetCall) return true;
-                    }
-                    
-                    return false;
-                }).map((msg: FT8DecodedMessage) => ({ ...msg, message: "<- " + msg.message, isIncoming: true }));
+        }
+        
+        if (autoSequenceRef.current && fsmRef.current) {
+            fsmRef.current.onPeriodDecodeReady(payload, decPeriodIndex);
+        } else if (payload.length > 0) {
+            // Route to QSO Log based on rules
+            const incomingQsoMessages = payload.filter((msg: FT8DecodedMessage) => {
+                const myCall = myCallRef.current;
+                const targetCall = targetCallRef.current;
                 
-                if (incomingQsoMessages.length > 0) {
-                    setQsoLog(prev => {
-                        const newLog = [...incomingQsoMessages.reverse(), ...prev];
-                        return newLog.slice(0, 100);
-                    });
+                const parts = msg.message.trim().split(/\s+/);
+                
+                if (myCall && msg.message.includes(myCall)) return true;
+                
+                if (targetCall) {
+                    // Normalize parts to remove hashed call brackets like <W1AW> if present
+                    const cleanParts = parts.map(p => p.replace(/[<>]/g, ''));
+                    
+                    // Check if target is the transmitter (Source)
+                    if (cleanParts.length >= 2 && cleanParts[1] === targetCall) return true;
+                    // CQ/QRZ with modifier format: CQ DX W1AW FN34
+                    if (cleanParts.length >= 3 && (cleanParts[0] === 'CQ' || cleanParts[0] === 'QRZ') && cleanParts[2] === targetCall) return true;
                 }
+                
+                return false;
+            }).map((msg: FT8DecodedMessage) => ({ ...msg, message: "<- " + msg.message, isIncoming: true }));
+            
+            if (incomingQsoMessages.length > 0) {
+                setQsoLog(prev => {
+                    const newLog = [...incomingQsoMessages.reverse(), ...prev];
+                    return newLog.slice(0, 100);
+                });
             }
         }
       } else if (e.data.type === 'ERROR') {
@@ -1222,11 +1226,12 @@ export default function App() {
                       if (callsign) {
                         setTargetCall(callsign);
                         if (fsmRef.current) {
+                          const isSameStation = fsmRef.current.targetCall === callsign;
                           fsmRef.current.targetCall = callsign;
                           const gridMatch = log.message.match(/\b[A-Z]{2}[0-9]{2}\b/);
-                          if (gridMatch) {
+                          if (gridMatch && gridMatch[0] !== 'RR73') {
                             fsmRef.current.targetGrid = gridMatch[0];
-                          } else {
+                          } else if (!isSameStation) {
                             fsmRef.current.targetGrid = null;
                           }
                           if (autoSequence) {
@@ -1298,11 +1303,12 @@ export default function App() {
                         if (callsign) {
                           setTargetCall(callsign);
                           if (fsmRef.current) {
+                            const isSameStation = fsmRef.current.targetCall === callsign;
                             fsmRef.current.targetCall = callsign;
                             const gridMatch = log.message.match(/\b[A-Z]{2}[0-9]{2}\b/);
-                            if (gridMatch) {
+                            if (gridMatch && gridMatch[0] !== 'RR73') {
                               fsmRef.current.targetGrid = gridMatch[0];
-                            } else {
+                            } else if (!isSameStation) {
                               fsmRef.current.targetGrid = null;
                             }
                             if (autoSequence) {
@@ -1335,9 +1341,9 @@ export default function App() {
         </section>
 
         {/* Right pane: Waterfall DSP */}
-        <section className="lg:col-span-7 bg-white dark:bg-[#050505] border border-border-subtle rounded-lg overflow-hidden flex flex-col relative h-[300px] lg:h-auto">
+        <section className={`lg:col-span-7 border border-border-subtle rounded-lg overflow-hidden flex flex-col relative h-[300px] lg:h-auto ${theme === 'dark' ? 'bg-[#050505]' : 'bg-white'}`}>
            <div className="absolute top-0 inset-x-0 bg-black/40 backdrop-blur-sm px-3 py-1 border-b border-border-subtle flex justify-between z-10 pointer-events-none">
-            <span className="text-[9px] font-mono tracking-tighter text-green-600 dark:text-[#4caf50]">WATERFALL (200 - 3000 Hz)</span>
+            <span className={`text-[9px] font-mono tracking-tighter ${theme === 'dark' ? 'text-[#4caf50]' : 'text-green-600'}`}>WATERFALL (200 - 3000 Hz)</span>
             <div className="flex gap-4">
                <span className="text-[9px] font-mono text-zinc-500">1k</span>
                <span className="text-[9px] font-mono text-zinc-500">2k</span>
@@ -1383,9 +1389,15 @@ export default function App() {
             <div className="flex flex-col">
               <label className="text-[9px] uppercase tracking-widest text-text-muted mb-1">My Station</label>
               <div className="flex items-center gap-2 cursor-pointer" onClick={() => setShowSettings(true)}>
-                <span className="bg-white dark:bg-[#050505] border border-border-subtle rounded px-3 py-1.5 text-xs font-mono text-green-600 dark:text-[#4caf50] uppercase font-bold min-w-[80px] text-center" title="Click to edit in Settings">{myCall}</span>
-                <span className="bg-white dark:bg-[#050505] border border-border-subtle rounded px-3 py-1.5 text-xs font-mono text-text-muted uppercase min-w-[60px] text-center" title="Click to edit in Settings">{myGrid}</span>
-                <span className="bg-white dark:bg-[#050505] border border-border-subtle rounded px-3 py-1.5 text-xs font-mono text-text-main min-w-[80px] text-center" title="Click to edit in Settings">{txFreq} Hz</span>
+                <span className={`border border-border-subtle rounded px-3 py-1.5 text-xs font-mono uppercase font-bold min-w-[80px] text-center ${
+                  theme === 'dark' ? 'bg-[#050505] text-[#4caf50]' : 'bg-white text-green-600'
+                }`} title="Click to edit in Settings">{myCall}</span>
+                <span className={`border border-border-subtle rounded px-3 py-1.5 text-xs font-mono uppercase min-w-[60px] text-center ${
+                  theme === 'dark' ? 'bg-[#050505] text-text-muted' : 'bg-white text-text-muted'
+                }`} title="Click to edit in Settings">{myGrid}</span>
+                <span className={`border border-border-subtle rounded px-3 py-1.5 text-xs font-mono min-w-[80px] text-center ${
+                  theme === 'dark' ? 'bg-[#050505] text-text-main' : 'bg-white text-text-main'
+                }`} title="Click to edit in Settings">{txFreq} Hz</span>
               </div>
             </div>
             <div className="flex flex-col">
@@ -1440,7 +1452,9 @@ export default function App() {
                  onClick={() => setAutoSequence(!autoSequence)}
                  className={`w-full lg:w-32 h-16 border rounded flex flex-col items-center justify-center gap-1 group transition-all active:scale-95 ${
                    autoSequence 
-                     ? 'bg-[#0f2a18] border-[#184525] hover:bg-[#153a21] text-green-400 font-bold' 
+                     ? (theme === 'dark'
+                         ? 'bg-[#0f2a18] border-[#184525] hover:bg-[#153a21] text-green-400 font-bold'
+                         : 'bg-green-100 border-green-300 hover:bg-green-200 text-green-800 font-bold')
                      : 'bg-btn border-border-input hover:bg-btn-hover text-text-muted'
                  }`}
               >
@@ -1463,13 +1477,25 @@ export default function App() {
                  onClick={() => setTxEnabled(!txEnabled)}
                  className={`w-full lg:w-32 h-16 border rounded flex flex-col items-center justify-center gap-1 group transition-all active:scale-95 ${
                    txEnabled 
-                     ? 'bg-[#2a0e0e] border-[#4a1a1a] hover:bg-[#3a1212] text-[#ff4444]'
+                     ? (theme === 'dark'
+                         ? 'bg-[#2a0e0e] border-[#4a1a1a] hover:bg-[#3a1212] text-[#ff4444]'
+                         : 'bg-red-100 border-red-300 hover:bg-red-200 text-red-600')
                      : 'bg-btn border-border-input hover:bg-btn-hover text-text-muted'
-                }`}
+                 }`}
               >
                  <span className="text-[10px] font-bold tracking-widest uppercase">{txEnabled ? 'TX Enabled' : 'Enable TX'}</span>
-                 <div className={`w-8 h-2 rounded-full relative ${txEnabled ? 'bg-[#4a1a1a]' : 'bg-panel'}`}>
-                   <div className={`absolute left-0 top-0 w-3 h-2 rounded-full transition-all ${txEnabled ? 'bg-[#ff4444] shadow-[0_0_8px_#ff4444] translate-x-5' : 'bg-[#3a3d45]'}`}></div>
+                 <div className={`w-8 h-2 rounded-full relative ${
+                   txEnabled 
+                     ? (theme === 'dark' ? 'bg-[#4a1a1a]' : 'bg-red-200')
+                     : 'bg-panel'
+                 }`}>
+                   <div className={`absolute left-0 top-0 w-3 h-2 rounded-full transition-all ${
+                     txEnabled 
+                       ? (theme === 'dark' 
+                           ? 'bg-[#ff4444] shadow-[0_0_8px_#ff4444] translate-x-5' 
+                           : 'bg-red-600 shadow-[0_0_8px_rgba(220,38,38,0.5)] translate-x-5')
+                       : 'bg-[#3a3d45]'
+                   }`}></div>
                  </div>
               </button>
               <p className="text-[8px] text-text-muted mt-2 italic text-center w-full lg:w-32">Awaiting VOX sync at :00... :45</p>

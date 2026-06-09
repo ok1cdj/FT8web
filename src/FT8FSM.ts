@@ -49,6 +49,7 @@ export default class FT8FSM {
     public targetReport: string | null;
     public myReceivedReport: string | null;
     public retryCount: number;
+    public hasTransmittedThisQso: boolean;
     public callerQueue: QueuedCaller[];
     public isTxEnabled: boolean;
 
@@ -73,6 +74,7 @@ export default class FT8FSM {
         this.targetReport = config.targetReport || null;
         this.myReceivedReport = null;
         this.retryCount = 0;
+        this.hasTransmittedThisQso = false;
         this.callerQueue = [];
         this.isTxEnabled = config.isTxEnabled || false;
     }
@@ -104,6 +106,10 @@ export default class FT8FSM {
     }
 
     public updateState(newState: string, targetCall: string | null = this.targetCall) {
+        if (targetCall !== this.targetCall || newState === 'REPLY_SENDING' || newState === 'SENDING_REPORT') {
+            this.retryCount = 0;
+            this.hasTransmittedThisQso = false;
+        }
         this.currentState = newState;
         this.targetCall = targetCall;
         this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
@@ -116,6 +122,7 @@ export default class FT8FSM {
         this.targetReport = null;
         this.myReceivedReport = null;
         this.retryCount = 0;
+        this.hasTransmittedThisQso = false;
         this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
     }
 
@@ -167,6 +174,7 @@ export default class FT8FSM {
         if (txString) {
             this.onTransmit(txString);
             this.onAppendQsoLog(`-> ${txString}`, true, false);
+            this.hasTransmittedThisQso = true;
             
             // Advance logic if we sent final closure
             if (completeQso) {
@@ -189,6 +197,7 @@ export default class FT8FSM {
                      this.targetReport = String(randomSnr);
                      this.currentState = 'SENDING_REPORT';
                      this.retryCount = 0;
+                     this.hasTransmittedThisQso = false;
                      this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
                 } else {
                      this.resetToIdle();
@@ -200,7 +209,7 @@ export default class FT8FSM {
     /**
      * Triggered around 13.0 seconds into the slot with batch decodes.
      */
-    public onPeriodDecodeReady(decodedMessagesArray: FT8DecodedMessage[]) {
+    public onPeriodDecodeReady(decodedMessagesArray: FT8DecodedMessage[], decodedPeriodIndex?: number) {
         const nowStr = new Date().toISOString().substring(11, 19);
         const divider = `--- ${nowStr} UTC ---`;
         let qsoDividerAppended = false;
@@ -270,7 +279,9 @@ export default class FT8FSM {
 
                             if (this.currentState === 'REPLY_SENDING') {
                                 const actualSnr = msgObj.snr !== undefined ? Math.round(msgObj.snr) : -12;
-                                const formattedSnr = actualSnr >= 0 ? `+${String(actualSnr).padStart(2, '0')}` : String(actualSnr);
+                                const formattedSnr = actualSnr >= 0 
+                                    ? `+${String(actualSnr).padStart(2, '0')}` 
+                                    : `-${String(Math.abs(actualSnr)).padStart(2, '0')}`;
                                 this.targetReport = formattedSnr;
 
                                 this.currentState = 'SENDING_R_REPORT';
@@ -288,11 +299,13 @@ export default class FT8FSM {
                         // 3. Otherwise treat as grid locator or other content in reply to CQ
                         else {
                             const gridMatch = upperContent.match(/^[A-Z]{2}[0-9]{2}/);
-                            if (gridMatch) {
+                            if (gridMatch && gridMatch[0] !== 'RR73') {
                                 this.targetGrid = gridMatch[0];
                                 if (this.currentState === 'CQ_SENDING' || this.currentState === 'IDLE') {
                                     const actualSnr = msgObj.snr !== undefined ? Math.round(msgObj.snr) : -12;
-                                    const formattedSnr = actualSnr >= 0 ? `+${String(actualSnr).padStart(2, '0')}` : String(actualSnr);
+                                    const formattedSnr = actualSnr >= 0 
+                                        ? `+${String(actualSnr).padStart(2, '0')}` 
+                                        : `-${String(Math.abs(actualSnr)).padStart(2, '0')}`;
                                     this.targetReport = formattedSnr;
 
                                     this.currentState = 'SENDING_REPORT';
@@ -304,7 +317,7 @@ export default class FT8FSM {
                     else if (this.currentState === 'IDLE' || this.currentState === 'CQ_SENDING') {
                         const upperContent = msgContent.toUpperCase();
                         const gridMatch = upperContent.match(/^[A-Z]{2}[0-9]{2}/);
-                        const grid = gridMatch ? gridMatch[0] : null;
+                        const grid = (gridMatch && gridMatch[0] !== 'RR73') ? gridMatch[0] : null;
                         const distance = this.calculateDistance(this.myGrid, grid);
                         incomingCallers.push({ callsign: sender, grid, distance });
                     }
@@ -328,22 +341,31 @@ export default class FT8FSM {
             
             const matchedMsg = decodedMessagesArray.find(m => m.message.includes(topCaller.callsign));
             const actualSnr = matchedMsg && matchedMsg.snr !== undefined ? Math.round(matchedMsg.snr) : -12;
-            const formattedSnr = actualSnr >= 0 ? `+${String(actualSnr).padStart(2, '0')}` : String(actualSnr);
+            const formattedSnr = actualSnr >= 0 
+                ? `+${String(actualSnr).padStart(2, '0')}` 
+                : `-${String(Math.abs(actualSnr)).padStart(2, '0')}`;
             this.targetReport = formattedSnr;
 
             this.currentState = 'SENDING_REPORT'; 
             this.retryCount = 0;
+            this.hasTransmittedThisQso = false;
             this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
         }
 
         // 3. Retry Counters for Timeout Path
         else if (this.targetCall && this.currentState !== 'IDLE') {
             if (!targetResponded) {
-                this.retryCount++;
-                if (this.retryCount >= this.maxRetries) {
-                    this.onAppendQsoLog(`[QSO ABORTED: TIMEOUT]`, false, true);
-                    this.callerQueue = [];
-                    this.resetToIdle();
+                const isRxPeriod = decodedPeriodIndex !== undefined 
+                    ? decodedPeriodIndex !== this.myPeriod 
+                    : true;
+
+                if (isRxPeriod && this.hasTransmittedThisQso) {
+                    this.retryCount++;
+                    if (this.retryCount >= this.maxRetries) {
+                        this.onAppendQsoLog(`[QSO ABORTED: TIMEOUT]`, false, true);
+                        this.callerQueue = [];
+                        this.resetToIdle();
+                    }
                 }
             }
         }
