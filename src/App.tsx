@@ -5,6 +5,9 @@ import { encodeFT8 } from '@e04/ft8ts';
 import CatManager from './CatManager.js';
 import FT8FSM, { QueuedCaller } from './FT8FSM';
 
+import { LogBookViewer } from './components/LogBookViewer';
+import { logBook } from './LogBook';
+
 export interface FT8DecodedMessage {
   time: string;
   snr: number;
@@ -125,6 +128,11 @@ export default function App() {
     return localStorage.getItem('ft8_icomAddress') || '94';
   });
 
+  const [maxLogEntries, setMaxLogEntries] = useState<number>(() => {
+    const saved = localStorage.getItem('ft8_maxLogEntries');
+    return saved ? Number(saved) : 50;
+  });
+
   const [decodeStats, setDecodeStats] = useState<{ count: number, durationMs: number } | null>(null);
 
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -185,14 +193,21 @@ export default function App() {
       localStorage.setItem('ft8_catMode', catMode);
       localStorage.setItem('ft8_catBaudRate', catBaudRate.toString());
       localStorage.setItem('ft8_icomAddress', icomAddress);
-  }, [myCall, myGrid, txFreq, decodeDepth, maxRetries, finalMessageMode, catMode, catBaudRate, icomAddress]);
+      localStorage.setItem('ft8_maxLogEntries', maxLogEntries.toString());
+  }, [myCall, myGrid, txFreq, decodeDepth, maxRetries, finalMessageMode, catMode, catBaudRate, icomAddress, maxLogEntries]);
 
   // UI State
   const [showSettings, setShowSettings] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
   const [serialPort, setSerialPort] = useState<any>(null);
   const [catTestResult, setCatTestResult] = useState<string | null>(null);
+  const [catConnected, setCatConnected] = useState<boolean>(false);
+  const vfoFreqRef = useRef(14074000);
   
+  useEffect(() => {
+    vfoFreqRef.current = vfoFreq;
+  }, [vfoFreq]);
+
   const catRef = useRef<CatManager | null>(null);
 
   // Auto-connect to previously permitted serial port if any
@@ -216,9 +231,11 @@ export default function App() {
       } as any);
       await cat.connect(port);
       catRef.current = cat;
+      setCatConnected(true);
       return cat;
     } catch (e: any) {
       console.error("CAT Init error:", e);
+      setCatConnected(false);
       throw e;
     }
   };
@@ -229,6 +246,7 @@ export default function App() {
       if (catRef.current) {
         catRef.current.disconnect().catch(err => console.error("Error disconnecting CAT:", err));
         catRef.current = null;
+        setCatConnected(false);
       }
       return;
     }
@@ -253,6 +271,7 @@ export default function App() {
       if (catRef.current) {
         await catRef.current.disconnect().catch(() => {});
         catRef.current = null;
+        setCatConnected(false);
       }
 
       if (!isActive) return;
@@ -264,6 +283,7 @@ export default function App() {
       } catch (err: any) {
         if (isActive) {
           setCatTestResult("Auto-init error: " + err.message);
+          setCatConnected(false);
         }
       }
     };
@@ -276,6 +296,7 @@ export default function App() {
       if (catRef.current) {
         const oldCat = catRef.current;
         catRef.current = null;
+        setCatConnected(false);
         oldCat.disconnect().catch(err => console.error("Error disconnecting on cleanup:", err));
       }
     };
@@ -817,6 +838,55 @@ export default function App() {
         });
       };
 
+      fsm.onLogQSO = async (qsoData) => {
+        try {
+            const now = new Date();
+            const pad = (n: number) => n.toString().padStart(2, '0');
+            const dateStr = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}`;
+            const timeStr = `${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}`;
+            
+            // Helper to determine band from VFO frequency
+            const getBandFromFreq = (freqInHz: number): string => {
+                const mhz = freqInHz / 1e6;
+                if (mhz >= 1.8 && mhz <= 2.0) return "160m";
+                if (mhz >= 3.5 && mhz <= 4.0) return "80m";
+                if (mhz >= 5.3 && mhz <= 5.4) return "60m";
+                if (mhz >= 7.0 && mhz <= 7.3) return "40m";
+                if (mhz >= 10.1 && mhz <= 10.2) return "30m";
+                if (mhz >= 14.0 && mhz <= 14.35) return "20m";
+                if (mhz >= 18.068 && mhz <= 18.168) return "17m";
+                if (mhz >= 21.0 && mhz <= 21.45) return "15m";
+                if (mhz >= 24.89 && mhz <= 24.99) return "12m";
+                if (mhz >= 28.0 && mhz <= 29.7) return "10m";
+                if (mhz >= 50.0 && mhz <= 54.0) return "6m";
+                return "";
+            };
+
+            const currentVfo = vfoFreqRef.current;
+
+            await logBook.logQSO({
+                call: qsoData.call,
+                qso_date: dateStr,
+                time_on: timeStr,
+                band: getBandFromFreq(currentVfo),
+                freq: currentVfo / 1e6,
+                mode: "MFSK",
+                submode: "FT8",
+                rst_sent: qsoData.rst_sent || "",
+                rst_rcvd: qsoData.rst_rcvd || "",
+                gridsquare: qsoData.grid || "",
+                timestamp: now.getTime()
+            });
+
+            // Trigger global refresh for UI
+            if (typeof (window as any).refreshQsoLogbookUi === 'function') {
+                (window as any).refreshQsoLogbookUi();
+            }
+        } catch (err) {
+            console.error("Failed to save QSO automatically", err);
+        }
+      };
+
       fsmRef.current = fsm;
       setFsmState('IDLE');
     } else {
@@ -1034,7 +1104,11 @@ export default function App() {
         {/* --- RF Frequency Readout --- */}
         <div className="flex flex-col items-center justify-center min-w-[180px]">
           <span className="text-[10px] uppercase tracking-widest text-text-muted mb-1">Radio VFO</span>
-          <span className="text-[26px] font-mono font-bold text-green-600 dark:text-[#4caf50] leading-none tracking-tight">
+          <span className={`text-[26px] font-mono font-bold leading-none tracking-tight ${
+            catMode !== 'manual' && !catConnected 
+              ? 'text-red-500 shadow-[0_0_8px_rgba(239,68,68,0.3)]' 
+              : 'text-green-600 dark:text-[#4caf50]'
+          }`}>
             {formatFrequency(vfoFreq)}
           </span>
         </div>
@@ -1404,6 +1478,11 @@ export default function App() {
         </div>
       </footer>
 
+      {/* Logbook Viewer Section */}
+      <div className="w-full mt-3">
+         <LogBookViewer maxEntries={maxLogEntries} />
+      </div>
+
       {showSettings && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-4">
           <div className="bg-panel border border-border-subtle p-6 rounded-lg shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
@@ -1458,6 +1537,18 @@ export default function App() {
                   <option value="RR73">RR73 (Standard, Faster)</option>
                   <option value="RRR">RRR (Requires 73 from target)</option>
                 </select>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] uppercase tracking-widest text-text-muted">Display Last N QSOs</label>
+                <input 
+                  type="number" 
+                  min="10"
+                  max="1000"
+                  value={maxLogEntries} 
+                  onChange={e => setMaxLogEntries(Number(e.target.value))} 
+                  className="bg-app border border-border-input rounded px-3 py-2 text-sm font-mono w-full focus:outline-none focus:border-[#4caf50] text-text-main" 
+                />
               </div>
 
               <hr className="border-border-subtle my-2" />

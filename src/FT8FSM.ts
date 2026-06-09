@@ -28,6 +28,13 @@ export interface QueuedCaller {
     distance: number;
 }
 
+export interface QSOData {
+    call: string;
+    grid: string | null;
+    rst_sent: string | null;
+    rst_rcvd: string | null;
+}
+
 export default class FT8FSM {
     public myCall: string;
     public myGrid: string;
@@ -40,6 +47,7 @@ export default class FT8FSM {
     public targetCall: string | null;
     public targetGrid: string | null;
     public targetReport: string | null;
+    public myReceivedReport: string | null;
     public retryCount: number;
     public callerQueue: QueuedCaller[];
     public isTxEnabled: boolean;
@@ -49,6 +57,7 @@ export default class FT8FSM {
     public onAppendQsoLog: (msg: string, isTx: boolean, isDivider: boolean) => void = () => {};
     public onTransmit: (msg: string) => void = () => {};
     public onStateChange: (state: string, targetCall: string | null, queue: QueuedCaller[]) => void = () => {};
+    public onLogQSO: (qso: QSOData) => void = () => {};
 
     constructor(config: FSMConfig = {}) {
         this.myCall = config.myCall || "OK1AAA";
@@ -62,6 +71,7 @@ export default class FT8FSM {
         this.targetCall = config.targetCall || null;
         this.targetGrid = config.targetGrid || null;
         this.targetReport = config.targetReport || null;
+        this.myReceivedReport = null;
         this.retryCount = 0;
         this.callerQueue = [];
         this.isTxEnabled = config.isTxEnabled || false;
@@ -104,6 +114,7 @@ export default class FT8FSM {
         this.targetCall = null;
         this.targetGrid = null;
         this.targetReport = null;
+        this.myReceivedReport = null;
         this.retryCount = 0;
         this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
     }
@@ -160,6 +171,14 @@ export default class FT8FSM {
             // Advance logic if we sent final closure
             if (completeQso) {
                 this.onAppendQsoLog(`[QSO COMPLETE w/ ${this.targetCall}]`, false, true);
+                if (this.targetCall) {
+                    this.onLogQSO({
+                        call: this.targetCall,
+                        grid: this.targetGrid,
+                        rst_sent: this.targetReport,
+                        rst_rcvd: this.myReceivedReport
+                    });
+                }
                 
                 // Immediately pick up the next queued caller, or go back to IDLE
                 if (this.callerQueue.length > 0) {
@@ -228,6 +247,14 @@ export default class FT8FSM {
                             } else if (upperContent.includes('73')) {
                                 // Plain 73 (not RR73) - "we got OK1CDJ IU1DXU 73 we need stop after 73 and no continue sending RR73"
                                 this.onAppendQsoLog(`[QSO COMPLETE w/ ${this.targetCall}]`, false, true);
+                                if (this.targetCall) {
+                                    this.onLogQSO({
+                                        call: this.targetCall,
+                                        grid: this.targetGrid,
+                                        rst_sent: this.targetReport,
+                                        rst_rcvd: this.myReceivedReport
+                                    });
+                                }
                                 this.resetToIdle();
                             } else if (upperContent.includes('RRR')) {
                                 this.currentState = 'SENDING_73';
@@ -236,6 +263,11 @@ export default class FT8FSM {
                         }
                         // 2. Check if they sent a signal report (e.g. -12, +04, R-12, R+04)
                         else if (/R?[+-]\d+/.test(upperContent)) {
+                            const match = upperContent.match(/R?([+-]\d+)/);
+                            if (match) {
+                                this.myReceivedReport = match[1];
+                            }
+
                             if (this.currentState === 'REPLY_SENDING') {
                                 const actualSnr = msgObj.snr !== undefined ? Math.round(msgObj.snr) : -12;
                                 const formattedSnr = actualSnr >= 0 ? `+${String(actualSnr).padStart(2, '0')}` : String(actualSnr);
