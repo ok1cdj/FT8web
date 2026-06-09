@@ -42,7 +42,7 @@ export function LogBookViewer({ maxEntries }: { maxEntries: number }) {
                 <h3 className="text-xs font-bold text-text-main uppercase tracking-widest text-[#4caf50]">QSO Logbook</h3>
                 <button 
                     onClick={handleExport}
-                    className="bg-btn border border-border-input hover:bg-btn-hover hover:border-[#4caf50] hover:text-[#4caf50] text-[10px] font-bold px-3 py-1 rounded uppercase tracking-wider text-text-muted transition-colors shadow-sm"
+                    className="bg-btn border border-border-input hover:bg-btn-hover hover:border-[#4caf50] hover:text-[#4caf50] text-[10px] font-bold px-3 py-1 rounded uppercase tracking-wider text-text-main transition-colors shadow-sm cursor-pointer"
                 >
                     Export ADIF
                 </button>
@@ -63,25 +63,25 @@ export function LogBookViewer({ maxEntries }: { maxEntries: number }) {
                         </div>
                         <div className="flex flex-col">
                             {qsos.map(qso => (
-                                <div key={qso.id} className="grid grid-cols-[130px_70px_50px_40px_40px_60px_1fr] gap-2 py-1.5 border-b border-border-subtle/30 hover:bg-[#2a2d35] transition-colors items-center text-[11px] text-left">
+                                <div key={qso.id} className="grid grid-cols-[130px_70px_50px_40px_40px_60px_1fr] gap-2 py-1.5 border-b border-border-subtle/30 hover:bg-btn transition-colors items-center text-[11px] text-left">
                                     <div className="font-mono text-text-muted truncate text-left">{qso.qso_date} {qso.time_on}</div>
-                                    <div className="font-bold text-sky-400 truncate tracking-wide text-left">{qso.call}</div>
+                                    <div className="font-bold text-sky-600 dark:text-sky-400 truncate tracking-wide text-left">{qso.call}</div>
                                     <div className="text-text-muted text-left">{qso.band}</div>
-                                    <div className="text-text-main font-mono text-[#4caf50] text-left">{qso.rst_sent}</div>
-                                    <div className="text-text-main font-mono text-red-400 text-left">{qso.rst_rcvd}</div>
-                                    <div className="text-zinc-500 font-mono tracking-wider text-left">{qso.gridsquare || '-'}</div>
+                                    <div className="text-green-600 dark:text-[#4caf50] font-mono text-left">{qso.rst_sent}</div>
+                                    <div className="text-red-650 dark:text-red-450 font-mono text-left">{qso.rst_rcvd}</div>
+                                    <div className="text-zinc-600 dark:text-zinc-400 font-mono tracking-wider text-left">{qso.gridsquare || '-'}</div>
                                     <div className="text-right flex items-center justify-end pr-2 gap-1.5">
                                         {deletingId === qso.id ? (
                                             <div className="flex gap-1">
                                                 <button 
                                                     onClick={() => handleDelete(qso.id!)}
-                                                    className="bg-red-600/80 hover:bg-red-600 text-white font-bold px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider transition-colors"
+                                                    className="bg-red-600 hover:bg-red-700 text-white font-bold px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider transition-colors cursor-pointer"
                                                 >
                                                     Yes
                                                 </button>
                                                 <button 
                                                     onClick={() => setDeletingId(null)}
-                                                    className="bg-zinc-700/80 hover:bg-zinc-600 text-text-main px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider transition-colors"
+                                                    className="bg-btn hover:bg-btn-hover border border-border-input text-text-main px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider transition-colors cursor-pointer"
                                                 >
                                                     No
                                                 </button>
@@ -89,7 +89,7 @@ export function LogBookViewer({ maxEntries }: { maxEntries: number }) {
                                         ) : (
                                             <button 
                                                 onClick={() => setDeletingId(qso.id!)}
-                                                className="text-red-500 hover:text-red-400 hover:bg-red-500/10 p-1 rounded transition-colors group flex items-center justify-center transform active:scale-95"
+                                                className="text-red-500 hover:text-red-400 hover:bg-red-500/10 p-1 rounded transition-colors group flex items-center justify-center transform active:scale-95 cursor-pointer"
                                                 title="Delete QSO"
                                             >
                                                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="opacity-70 group-hover:opacity-100">
