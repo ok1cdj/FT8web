@@ -744,23 +744,94 @@ export default function App() {
   const toggleAudio = async (forcedDeviceId?: string) => {
     const targetDeviceId = typeof forcedDeviceId === 'string' ? forcedDeviceId : selectedDeviceId;
     
+    // De-activate path
     if (audioActive && typeof forcedDeviceId === 'undefined') {
         if (mediaStreamRef.current) {
             mediaStreamRef.current.getTracks().forEach(t => t.stop());
             mediaStreamRef.current = null;
         }
-        if (audioCtxRef.current && audioCtxRef.current.state === 'running') {
-            await audioCtxRef.current.suspend();
+        if (audioCtxRef.current) {
+            try {
+                await audioCtxRef.current.close();
+            } catch (e) {
+                console.error('[Audio] Error closing context on stop:', e);
+            }
+            audioCtxRef.current = null;
         }
+        sourceNodeRef.current = null;
+        analyserRef.current = null;
+        captureNodeRef.current = null;
         setAudioActive(false);
         setAudioLevel(0);
         return;
     }
 
     try {
+      // If there's an active context and we are forcing a change, tear it down first!
+      if (audioCtxRef.current && typeof forcedDeviceId === 'string') {
+        console.log('[Audio] Tearing down old AudioContext before switching devices...');
+        if (mediaStreamRef.current) {
+            mediaStreamRef.current.getTracks().forEach(t => t.stop());
+            mediaStreamRef.current = null;
+        }
+        try {
+            await audioCtxRef.current.close();
+        } catch (e) {
+            console.error('[Audio] Error closing context for switch:', e);
+        }
+        audioCtxRef.current = null;
+        sourceNodeRef.current = null;
+        analyserRef.current = null;
+        captureNodeRef.current = null;
+        // Tiny 250ms sleep to allow the Android OS audio hardware thread to completely free/recycle the input handles.
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+
+      // 1. First get the MediaStream from getUserMedia BEFORE creating/resuming AudioContext.
+      // This is crucial on Android because if the user selects a non-existent or locked device,
+      // creating/resuming the context first can get WebAudio out-of-sync or stuck in a broken state.
+      const dspConstraints = {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      };
+
+      let stream: MediaStream;
+      try {
+        // Try strict targetDeviceId exact mode first if specified
+        stream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            ...(targetDeviceId ? { deviceId: { exact: targetDeviceId } } : {}),
+            ...dspConstraints
+          } 
+        });
+        console.log('[Audio] Successfully acquired media stream with exact constraint:', targetDeviceId);
+      } catch (err: any) {
+        console.warn('[Audio] getUserMedia strict constraints failed, attempting fallback to ideal deviceId constraint:', err);
+        try {
+          // Retry using "ideal" constraint so the OS isn't overconstrained but still matches if possible
+          stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+              ...(targetDeviceId ? { deviceId: { ideal: targetDeviceId } } : {}),
+              ...dspConstraints
+            } 
+          });
+          console.log('[Audio] Successfully acquired stream using ideal constraint:', targetDeviceId);
+        } catch (err2) {
+          console.error('[Audio] getUserMedia of target device failed, falling back to default input. Error:', err2);
+          // Standard ultimate default fallback - request simply any audio input
+          stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: dspConstraints 
+          });
+          console.log('[Audio] Acquired default system microphone');
+        }
+      }
+
+      mediaStreamRef.current = stream;
+
+      // 2. Now instantiate/resume the AudioContext
       let ctx = audioCtxRef.current;
       if (!ctx) {
-          // Must be derived via user interaction for iOS strict compliance
           const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
           // FT8 strongly prefers 12KHz. We request it, but must be resilient if OS overrides it.
           ctx = new AudioContextCtor({ sampleRate: 12000 });
@@ -774,23 +845,6 @@ export default function App() {
       if (typeof (ctx as any).setSinkId === 'function' && selectedOutputDeviceId) {
           (ctx as any).setSinkId(selectedOutputDeviceId).catch((e: any) => console.error("setSinkId fail:", e));
       }
-      
-      if (mediaStreamRef.current) {
-          mediaStreamRef.current.getTracks().forEach(t => t.stop());
-      }
-      if (sourceNodeRef.current) {
-          sourceNodeRef.current.disconnect();
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          ...(targetDeviceId ? { deviceId: { exact: targetDeviceId } } : {}),
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false, 
-        } 
-      });
-      mediaStreamRef.current = stream;
       
       const source = ctx.createMediaStreamSource(stream);
       sourceNodeRef.current = source;
@@ -818,7 +872,6 @@ export default function App() {
               let sumSquares = 0;
               for(let i=0; i<chunk.length; i++) sumSquares += chunk[i] * chunk[i];
               const rms = Math.sqrt(sumSquares / chunk.length);
-              // Scale RMS roughly to 0-100 progress
               setAudioLevel(Math.min(100, rms * 1500)); 
               
               // Only accumulate if we are in the 0.0 - 13.0s recording window
@@ -826,7 +879,6 @@ export default function App() {
               const secondsInWindow = (now.getUTCSeconds() + now.getUTCMilliseconds() / 1000) % 15;
               
               if (secondsInWindow < 13.0) {
-                  // Accumulate raw payload
                   const newBuffer = new Float32Array(rxBufferRef.current.length + chunk.length);
                   newBuffer.set(rxBufferRef.current, 0);
                   newBuffer.set(chunk, rxBufferRef.current.length);
@@ -851,52 +903,15 @@ export default function App() {
       const newId = e.target.value;
       setSelectedDeviceId(newId);
       
-      if (!audioActive || !audioCtxRef.current) return;
+      if (!audioActive) return;
 
-      console.log(`[Audio] Switching input device to: ${newId}`);
+      console.log(`[Audio] Initiating input device shift to: ${newId}`);
 
       try {
-          // 1. Explicitly release hardware audio locks for Android
-          if (mediaStreamRef.current) {
-              console.log('[Audio] Releasing old audio stream tracks explicitly');
-              mediaStreamRef.current.getTracks().forEach(track => {
-                  track.stop();
-              });
-              mediaStreamRef.current = null;
-          }
-
-          // 2. Disconnect old Web Audio API source node to prevent duplicates
-          if (sourceNodeRef.current) {
-              console.log('[Audio] Disconnecting old MediaStreamAudioSourceNode');
-              sourceNodeRef.current.disconnect();
-              sourceNodeRef.current = null;
-          }
-
-          // 3. Strict Device Constraints & DSP Disabling (Crucial for FT8 tones)
-          const constraints: MediaStreamConstraints = {
-              audio: {
-                  deviceId: newId ? { exact: newId } : undefined,
-                  echoCancellation: false,
-                  noiseSuppression: false,
-                  autoGainControl: false,
-              }
-          };
-
-          // 4. Request new stream from OS
-          const newStream = await navigator.mediaDevices.getUserMedia(constraints);
-          mediaStreamRef.current = newStream; // Update global/ref
-
-          // 5. Reconnect to Web Audio API downstream
-          const newSourceNode = audioCtxRef.current.createMediaStreamSource(newStream);
-          sourceNodeRef.current = newSourceNode;
-
-          // Connect to existing processing pipeline
-          if (analyserRef.current) newSourceNode.connect(analyserRef.current);
-          if (captureNodeRef.current) newSourceNode.connect(captureNodeRef.current);
-
-          console.log('[Audio] Successfully connected new audio input device');
+          await toggleAudio(newId);
+          console.log('[Audio] Successfully completed device switch.');
       } catch (err: any) {
-          console.error('[Audio] Failed to switch audio input device. OS/Hardware may be locked or permissions rejected:', err);
+          console.error('[Audio] Failed to switch audio input device:', err);
           alert(`Failed to switch audio device: ${err.message || 'Device Busy'}`);
           setAudioActive(false);
       }
@@ -1569,7 +1584,7 @@ export default function App() {
                    }`}></div>
                  </div>
               </button>
-              <p className="text-[8px] text-text-muted mt-2 italic text-center w-full lg:w-32">Awaiting VOX sync at :00... :45</p>
+              
             </div>
           </div>
         </div>
