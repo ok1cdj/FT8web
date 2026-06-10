@@ -2,12 +2,10 @@ import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import { serial as bundledPolyfill } from 'web-serial-polyfill';
 
-// Add type declaration for window.webSerialPolyfill and Navigator.serial override
+// Add type declaration for Navigator.serial override
 declare global {
-  interface Window {
-    webSerialPolyfill?: any;
-  }
   interface Navigator {
     serial?: any;
   }
@@ -16,19 +14,15 @@ declare global {
 // --- Web Serial Polyfill fallback for Android compatibility using WebUSB mapping ---
 (() => {
   if (!navigator.serial && (navigator as any).usb) {
-    if (window.webSerialPolyfill) {
-      try {
-        Object.defineProperty(navigator, 'serial', {
-          value: window.webSerialPolyfill,
-          configurable: true,
-          writable: true
-        });
-        console.log('[WebSerial Polyfill] No native Web Serial detected but WebUSB is supported. Overrode navigator.serial with WebUSB Polyfill for Android compatibility.');
-      } catch (err) {
-        console.error('[WebSerial Polyfill] Failed to patch navigator.serial:', err);
-      }
-    } else {
-      console.warn('[WebSerial Polyfill] No native Web Serial detected, but the WebUSB polyfill script is not loaded on window.webSerialPolyfill.');
+    try {
+      Object.defineProperty(navigator, 'serial', {
+        value: bundledPolyfill,
+        configurable: true,
+        writable: true
+      });
+      console.log('[WebSerial Polyfill] No native Web Serial detected but WebUSB is supported. Overrode navigator.serial with WebUSB Polyfill for Android compatibility.');
+    } catch (err) {
+      console.error('[WebSerial Polyfill] Failed to patch navigator.serial:', err);
     }
   } else if (navigator.serial) {
     console.log('[WebSerial] Native Web Serial is supported by this browser. Polyfill fallback is dormant.');

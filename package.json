@@ -21,7 +21,8 @@
     "motion": "^12.23.24",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
-    "vite": "^6.2.3"
+    "vite": "^6.2.3",
+    "web-serial-polyfill": "^1.0.15"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
