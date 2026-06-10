@@ -847,11 +847,58 @@ export default function App() {
     }
   };
 
-  const handleDeviceChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+  const handleDeviceChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
       const newId = e.target.value;
       setSelectedDeviceId(newId);
-      if (audioActive) {
-          toggleAudio(newId);
+      
+      if (!audioActive || !audioCtxRef.current) return;
+
+      console.log(`[Audio] Switching input device to: ${newId}`);
+
+      try {
+          // 1. Explicitly release hardware audio locks for Android
+          if (mediaStreamRef.current) {
+              console.log('[Audio] Releasing old audio stream tracks explicitly');
+              mediaStreamRef.current.getTracks().forEach(track => {
+                  track.stop();
+              });
+              mediaStreamRef.current = null;
+          }
+
+          // 2. Disconnect old Web Audio API source node to prevent duplicates
+          if (sourceNodeRef.current) {
+              console.log('[Audio] Disconnecting old MediaStreamAudioSourceNode');
+              sourceNodeRef.current.disconnect();
+              sourceNodeRef.current = null;
+          }
+
+          // 3. Strict Device Constraints & DSP Disabling (Crucial for FT8 tones)
+          const constraints: MediaStreamConstraints = {
+              audio: {
+                  deviceId: newId ? { exact: newId } : undefined,
+                  echoCancellation: false,
+                  noiseSuppression: false,
+                  autoGainControl: false,
+              }
+          };
+
+          // 4. Request new stream from OS
+          const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+          mediaStreamRef.current = newStream; // Update global/ref
+
+          // 5. Reconnect to Web Audio API downstream
+          const newSourceNode = audioCtxRef.current.createMediaStreamSource(newStream);
+          sourceNodeRef.current = newSourceNode;
+
+          // Connect to existing processing pipeline
+          if (analyserRef.current) newSourceNode.connect(analyserRef.current);
+          if (captureNodeRef.current) newSourceNode.connect(captureNodeRef.current);
+
+          console.log('[Audio] Successfully connected new audio input device');
+      } catch (err: any) {
+          console.error('[Audio] Failed to switch audio input device. OS/Hardware may be locked or permissions rejected:', err);
+          alert(`Failed to switch audio device: ${err.message || 'Device Busy'}`);
+          setAudioActive(false);
       }
   };
 
