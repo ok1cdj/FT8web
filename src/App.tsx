@@ -320,7 +320,15 @@ export default function App() {
         return;
       }
 
-      const port = await (navigator as any).serial.requestPort();
+      // Explicit USB Vendor ID filters for Android & general WebUSB-to-Serial compatibility
+      const serialFilters = [
+        { usbVendorId: 0x10C4 }, // Silicon Labs CP210x (Icom IC-7300, Kenwood, etc.)
+        { usbVendorId: 0x0403 }, // FTDI
+        { usbVendorId: 0x1A86 }, // CH340 / CH341
+        { usbVendorId: 0x067B }  // Prolific PL2303
+      ];
+
+      const port = await (navigator as any).serial.requestPort({ filters: serialFilters });
       
       // Cleanly disconnect old port before switching to a new selected port
       if (catRef.current) {
