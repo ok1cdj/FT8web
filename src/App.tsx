@@ -322,10 +322,10 @@ export default function App() {
 
       // Explicit USB Vendor ID filters for Android & general WebUSB-to-Serial compatibility
       const serialFilters = [
-        { usbVendorId: 0x10C4 }, // Silicon Labs CP210x (Icom IC-7300, Kenwood, etc.)
-        { usbVendorId: 0x0403 }, // FTDI
-        { usbVendorId: 0x1A86 }, // CH340 / CH341
-        { usbVendorId: 0x067B }  // Prolific PL2303
+        { usbVendorId: 0x1A86, vendorId: 6790 },  // CH340 / CH341 (Tvůj převodník!)
+        { usbVendorId: 0x10C4, vendorId: 4292 },  // Silicon Labs CP210x (Icom IC-7300)
+        { usbVendorId: 0x0403, vendorId: 1027 },  // FTDI Chips
+        { usbVendorId: 0x067B, vendorId: 1659 }   // Prolific PL2303
       ];
 
       const port = await (navigator as any).serial.requestPort({ filters: serialFilters });
