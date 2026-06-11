@@ -319,7 +319,16 @@ export default function App() {
         setCatTestResult("Web Serial API not supported in this browser. Try opening in a new tab or use Chrome/Edge.");
         return;
       }
-      const port = await (navigator as any).serial.requestPort();
+
+      // Explicit USB Vendor ID filters for Android & general WebUSB-to-Serial compatibility
+      const serialFilters = [
+        { usbVendorId: 0x10C4 }, // Silicon Labs CP210x (Icom IC-7300, Kenwood, etc.)
+        { usbVendorId: 0x0403 }, // FTDI
+        { usbVendorId: 0x1A86 }, // CH340 / CH341
+        { usbVendorId: 0x067B }  // Prolific PL2303
+      ];
+
+      const port = await (navigator as any).serial.requestPort({ filters: serialFilters });
       
       // Cleanly disconnect old port before switching to a new selected port
       if (catRef.current) {
@@ -790,40 +799,33 @@ export default function App() {
       // 1. First get the MediaStream from getUserMedia BEFORE creating/resuming AudioContext.
       // This is crucial on Android because if the user selects a non-existent or locked device,
       // creating/resuming the context first can get WebAudio out-of-sync or stuck in a broken state.
-      const dspConstraints = {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-      };
-
       let stream: MediaStream;
       try {
-        // Try strict targetDeviceId exact mode first if specified
+        // Try strict targetDeviceId exact mode first if specified.
+        // DO NOT pass electronic DSP constraints (echoCancellation, etc.) here to prevent Android driver / HAL crash on raw USB adapters.
         stream = await navigator.mediaDevices.getUserMedia({ 
-          audio: {
-            ...(targetDeviceId ? { deviceId: { exact: targetDeviceId } } : {}),
-            ...dspConstraints
-          } 
+          audio: targetDeviceId ? { deviceId: { exact: targetDeviceId } } : true
         });
         console.log('[Audio] Successfully acquired media stream with exact constraint:', targetDeviceId);
       } catch (err: any) {
         console.warn('[Audio] getUserMedia strict constraints failed, attempting fallback to ideal deviceId constraint:', err);
         try {
-          // Retry using "ideal" constraint so the OS isn't overconstrained but still matches if possible
+          // Retry using "ideal" constraint without voice-processing DSP constraints to avoid USB driver rejections.
           stream = await navigator.mediaDevices.getUserMedia({ 
-            audio: {
-              ...(targetDeviceId ? { deviceId: { ideal: targetDeviceId } } : {}),
-              ...dspConstraints
-            } 
+            audio: targetDeviceId ? { deviceId: { ideal: targetDeviceId } } : true
           });
           console.log('[Audio] Successfully acquired stream using ideal constraint:', targetDeviceId);
         } catch (err2) {
-          console.error('[Audio] getUserMedia of target device failed, falling back to default input. Error:', err2);
-          // Standard ultimate default fallback - request simply any audio input
+          console.error('[Audio] getUserMedia of target device failed, falling back to default input with DSP safety. Error:', err2);
+          // Standard ultimate default fallback - request simply any audio input but explicitly disable mobile phone line DSP voice processing filters for FT8.
           stream = await navigator.mediaDevices.getUserMedia({ 
-            audio: dspConstraints 
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+            } 
           });
-          console.log('[Audio] Acquired default system microphone');
+          console.log('[Audio] Acquired default system microphone with DSP filters turned off');
         }
       }
 
@@ -1552,9 +1554,6 @@ export default function App() {
                    <span className="text-[8px] text-zinc-500 font-mono">Q: {fsmQueueLength} pending</span>
                  )}
               </button>
-              <p className="text-[8px] text-text-muted mt-2 italic text-center w-full lg:w-32">
-                {autoSequence ? `FSM: ${fsmState}` : "Manual operations enabled"}
-              </p>
             </div>
 
             {/* Enable TX PTT Trigger */}
