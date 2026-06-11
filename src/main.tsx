@@ -68,6 +68,32 @@ window.addEventListener('offline', () => {
   window.dispatchEvent(new CustomEvent('app-network-state', { detail: { isOnline: false } }));
 });
 
+// --- Eruda Mobile DevTools / Console Console Initialization ---
+(() => {
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  const debugQuery = window.location.search.includes('eruda=true') || window.location.search.includes('debug=true');
+  if (isMobile || debugQuery) {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/eruda';
+    script.async = true;
+    script.onload = () => {
+      if ((window as any).eruda) {
+        (window as any).eruda.init({
+          defaults: {
+            displaySize: 50,
+            theme: 'Dark'
+          }
+        });
+        console.log('[Eruda] Mobile developer console initialized successfully.');
+      }
+    };
+    script.onerror = () => {
+      console.error('[Eruda] Failed to load Eruda devtools script from CDN.');
+    };
+    document.head.appendChild(script);
+  }
+})();
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
