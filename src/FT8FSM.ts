@@ -26,6 +26,7 @@ export interface QueuedCaller {
     callsign: string;
     grid: string | null;
     distance: number;
+    report?: string | null;
 }
 
 export interface QSOData {
@@ -193,6 +194,7 @@ export default class FT8FSM {
                      const next = this.callerQueue.shift()!;
                      this.targetCall = next.callsign;
                      this.targetGrid = next.grid;
+                     this.myReceivedReport = next.report || null;
                      const randomSnr = Math.floor(Math.random() * 15) - 20;
                      this.targetReport = String(randomSnr);
                      this.currentState = 'SENDING_REPORT';
@@ -319,7 +321,9 @@ export default class FT8FSM {
                         const gridMatch = upperContent.match(/^[A-Z]{2}[0-9]{2}/);
                         const grid = (gridMatch && gridMatch[0] !== 'RR73') ? gridMatch[0] : null;
                         const distance = this.calculateDistance(this.myGrid, grid);
-                        incomingCallers.push({ callsign: sender, grid, distance });
+                        const reportMatch = upperContent.match(/R?([+-]\d+)/);
+                        const report = reportMatch ? reportMatch[1] : null;
+                        incomingCallers.push({ callsign: sender, grid, distance, report });
                     }
                 }
             }
@@ -338,6 +342,7 @@ export default class FT8FSM {
             const topCaller = this.callerQueue.shift()!;
             this.targetCall = topCaller.callsign;
             this.targetGrid = topCaller.grid;
+            this.myReceivedReport = topCaller.report || null;
             
             const matchedMsg = decodedMessagesArray.find(m => m.message.includes(topCaller.callsign));
             const actualSnr = matchedMsg && matchedMsg.snr !== undefined ? Math.round(matchedMsg.snr) : -12;
