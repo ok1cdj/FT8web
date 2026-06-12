@@ -14,7 +14,7 @@ export interface UniversalSerialPortInstance {
 // Native Wrapper (PC Mode)
 // -------------------------------------------------------------
 class NativeSerialPortWrapper implements UniversalSerialPortInstance {
-  constructor(private port: any) {}
+  constructor(private port: any) {};
   
   get readable() { return this.port.readable; }
   get writable() { return this.port.writable; }

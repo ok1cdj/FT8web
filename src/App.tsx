@@ -337,7 +337,8 @@ export default function App() {
         { usbVendorId: 0x10C4, vendorId: 4292 }, // Silicon Labs CP210x
         { usbVendorId: 0x1A86, vendorId: 6790 }, // Qinheng CH34x
         { usbVendorId: 0x0403, vendorId: 1027 }, // FTDI
-        { usbVendorId: 0x067B, vendorId: 1659 }  // Prolific PL2303
+        { usbVendorId: 0x067B, vendorId: 1659 },  // Prolific PL2303
+        { usbVendorId: 0x0C26, vendorId: 3110 }  // Icom Inc. IC-7300 MKII
       ];
 
       const port = await UniversalSerialPort.requestPort({ filters: serialFilters });
