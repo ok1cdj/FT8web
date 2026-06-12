@@ -5,12 +5,12 @@ A production-ready Amateur Radio FT8 client running entirely in the browser usin
 ## Features
 - **In-Browser Decoding/Encoding:** Uses a Web Worker to decode FT8 audio streams in the background without blocking the UI.
 - **Automated QSO State Machine:** Incorporates a robust Finite State Machine (FSM) to automatically manage the flow of your digital contacts (CQ, Grid, SNR Report, 73) and handle DX pile-up caller distance priority sorting.
-- **Web Serial CAT Control:** Direct browser-to-radio communication supporting Kenwood, standard QDX, and Icom (CI-V) protocols for PTT and frequency control.
+- **Web Serial & WebUSB CAT Control:** Direct browser-to-radio communication. Uses the native Web Serial API on desktops and a custom `WebUSB` fallback driver on Android (bypassing broken Android serial implementations). Supports low-level control transfers for major USB host chips (Silicon Labs CP210x, Qinheng CH34x, FTDI, and Prolific PL2303) over USB OTG.
 - **"Fake Split" (Rig Split) Transmit Optimization:** Dynamically shifts the transceiver VFO frequency during transmission to keep the modulated audio frequency close to the 1500 Hz filter center. This prevents power roll-off and harmonic splatter near the SSB filter edges (0 Hz and 3000 Hz) while restoring the baseline VFO frequency upon return to RX.
 - **Band Activity & Active QSO:** Separated global logs and targeted incoming/outgoing QSO messages for clear visibility.
 - **Hardware VOX Compatible:** Audio generation uses a hard-start envelope to assure VOX will work natively as an alternative to CAT control.
 - **Live Waterfall:** Web Audio API AnalyserNode rendering a high-contrast waterfall focused tightly on the SSB filter bandwidth (0 Hz - 3000 Hz).
-- **iOS Compliant:** Strict user-interaction requirements for audio context creation to ensure compatibility with Safari on iOS and support for screen wake locks.
+- **Mobile Testing & iOS/Android Support:** Built with strict user-interaction requirements for audio contexts to support iOS Safari. Embedded Eruda developer console accessible via `?debug=true` for advanced on-device DSP/CAT protocol debugging.
 
 ## Testing with a Real Radio (Hardware Setup)
 
@@ -48,5 +48,6 @@ To run the tests:
 
 ## Architecture
 - **Frontend:** React 19 + Vite + Tailwind CSS v4
+- **Hardware Integration Layer:** Custom `UniversalSerialPort` acting as an abstraction over native Web Serial API capability and direct Android `WebUSB` control transfers, facilitating Android USB-OTG connectivity for amateur radio transceivers.
 - **DSP Engine:** `@e04/ft8ts` (Running in a dedicated Web Worker `ft8-worker.ts`)
 - **Audio Pipeline:** `AudioWorkletNode` (`AudioWorkletBlob.ts`) for raw sample accumulation (avoiding main thread drops).
