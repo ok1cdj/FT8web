@@ -6,12 +6,14 @@ export function LogBookViewer({
     maxEntries, 
     wavelogEnabled, 
     wavelogUrl, 
-    wavelogApiKey 
+    wavelogApiKey,
+    wavelogStationProfileId
 }: { 
     maxEntries: number, 
     wavelogEnabled: boolean, 
     wavelogUrl: string, 
-    wavelogApiKey: string 
+    wavelogApiKey: string,
+    wavelogStationProfileId: string
 }) {
     const [qsos, setQsos] = useState<QSO[]>([]);
     const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -50,7 +52,7 @@ export function LogBookViewer({
 
     const handleSync = async () => {
         setIsSyncing(true);
-        await CloudLogService.syncOfflineQueue({ wavelogEnabled, wavelogUrl, wavelogApiKey });
+        await CloudLogService.syncOfflineQueue({ wavelogEnabled, wavelogUrl, wavelogApiKey, wavelogStationProfileId });
         await fetchQsos();
         setIsSyncing(false);
     };

@@ -145,6 +145,9 @@ export default function App() {
   const [wavelogApiKey, setWavelogApiKey] = useState<string>(() => {
     return localStorage.getItem('ft8_wavelogApiKey') || '';
   });
+  const [wavelogStationProfileId, setWavelogStationProfileId] = useState<string>(() => {
+    return localStorage.getItem('ft8_wavelogStationProfileId') || '';
+  });
 
   const [decodeStats, setDecodeStats] = useState<{ count: number, durationMs: number } | null>(null);
 
@@ -210,7 +213,8 @@ export default function App() {
       localStorage.setItem('ft8_wavelogEnabled', String(wavelogEnabled));
       localStorage.setItem('ft8_wavelogUrl', wavelogUrl);
       localStorage.setItem('ft8_wavelogApiKey', wavelogApiKey);
-  }, [myCall, myGrid, txFreq, decodeDepth, maxRetries, finalMessageMode, catMode, catBaudRate, icomAddress, maxLogEntries, wavelogEnabled, wavelogUrl, wavelogApiKey]);
+      localStorage.setItem('ft8_wavelogStationProfileId', wavelogStationProfileId);
+  }, [myCall, myGrid, txFreq, decodeDepth, maxRetries, finalMessageMode, catMode, catBaudRate, icomAddress, maxLogEntries, wavelogEnabled, wavelogUrl, wavelogApiKey, wavelogStationProfileId]);
 
   // UI State
   const [showSettings, setShowSettings] = useState(false);
@@ -423,7 +427,8 @@ export default function App() {
         await CloudLogService.syncOfflineQueue({
           wavelogEnabled,
           wavelogUrl,
-          wavelogApiKey
+          wavelogApiKey,
+          wavelogStationProfileId
         });
         // Trigger UI refresh
         if (typeof (window as any).refreshQsoLogbookUi === 'function') {
@@ -433,7 +438,7 @@ export default function App() {
     };
     window.addEventListener('online', handleOnline);
     return () => window.removeEventListener('online', handleOnline);
-  }, [wavelogEnabled, wavelogUrl, wavelogApiKey]);
+  }, [wavelogEnabled, wavelogUrl, wavelogApiKey, wavelogStationProfileId]);
 
   // Refs for Worker Access
   const myCallRef = useRef<string>(myCall);
@@ -1059,7 +1064,7 @@ export default function App() {
             // Push to cloud instantly if enabled
             if (wavelogEnabled && navigator.onLine) {
                  const success = await CloudLogService.pushSingleQSO(qsoRecord, {
-                     wavelogEnabled, wavelogUrl, wavelogApiKey
+                     wavelogEnabled, wavelogUrl, wavelogApiKey, wavelogStationProfileId
                  });
                  if (success) {
                      await logBook.updateQSO({ ...qsoRecord, synced: true });
@@ -1638,6 +1643,7 @@ export default function App() {
             wavelogEnabled={wavelogEnabled} 
             wavelogUrl={wavelogUrl} 
             wavelogApiKey={wavelogApiKey} 
+            wavelogStationProfileId={wavelogStationProfileId}
          />
       </div>
 
@@ -1840,11 +1846,21 @@ export default function App() {
                       placeholder="Your API Key"
                     />
                   </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] uppercase tracking-widest text-[#8e9299]">Station Profile ID</label>
+                    <input 
+                      type="text" 
+                      value={wavelogStationProfileId} 
+                      onChange={e => setWavelogStationProfileId(e.target.value)} 
+                      className="bg-app border border-border-input rounded px-3 py-2 text-sm font-mono w-full focus:outline-none focus:border-[#4caf50] text-text-main" 
+                      placeholder="e.g. 5"
+                    />
+                  </div>
                   <button 
                     onClick={async () => {
                         const btn = document.getElementById('btn-wavelog-test');
                         if (btn) btn.innerText = 'Testing...';
-                        const result = await CloudLogService.testWavelogConnection(wavelogUrl, wavelogApiKey);
+                        const result = await CloudLogService.testWavelogConnection(wavelogUrl, wavelogApiKey, wavelogStationProfileId);
                         if (btn) {
                             if (result.success) {
                                 btn.innerText = 'Success!';
@@ -1866,7 +1882,7 @@ export default function App() {
                         }
                     }}
                     id="btn-wavelog-test"
-                    disabled={!wavelogUrl || !wavelogApiKey}
+                    disabled={!wavelogUrl || !wavelogApiKey || !wavelogStationProfileId}
                     className="w-full bg-app border border-border-input text-text-main hover:bg-[#4caf50] hover:text-white hover:border-[#4caf50] disabled:opacity-50 disabled:hover:bg-app disabled:hover:border-border-input disabled:hover:text-text-main rounded px-3 py-2 text-xs font-mono font-bold transition-colors"
                   >
                     Test Connection
