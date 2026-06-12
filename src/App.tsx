@@ -462,6 +462,27 @@ export default function App() {
     autoSequenceRef.current = autoSequence;
   }, [autoSequence]);
 
+  const wavelogEnabledRef = useRef<boolean>(wavelogEnabled);
+  const wavelogUrlRef = useRef<string>(wavelogUrl);
+  const wavelogApiKeyRef = useRef<string>(wavelogApiKey);
+  const wavelogStationProfileIdRef = useRef<string>(wavelogStationProfileId);
+
+  useEffect(() => {
+    wavelogEnabledRef.current = wavelogEnabled;
+  }, [wavelogEnabled]);
+
+  useEffect(() => {
+    wavelogUrlRef.current = wavelogUrl;
+  }, [wavelogUrl]);
+
+  useEffect(() => {
+    wavelogApiKeyRef.current = wavelogApiKey;
+  }, [wavelogApiKey]);
+
+  useEffect(() => {
+    wavelogStationProfileIdRef.current = wavelogStationProfileId;
+  }, [wavelogStationProfileId]);
+
   // Core References
 
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -1061,19 +1082,31 @@ export default function App() {
             const id = await logBook.logQSO(qsoRecord);
             qsoRecord.id = id;
 
-            // Push to cloud instantly if enabled
-            if (wavelogEnabled && navigator.onLine) {
-                 const success = await CloudLogService.pushSingleQSO(qsoRecord, {
-                     wavelogEnabled, wavelogUrl, wavelogApiKey, wavelogStationProfileId
-                 });
-                 if (success) {
-                     await logBook.updateQSO({ ...qsoRecord, synced: true });
-                 }
-            }
-
-            // Trigger global refresh for UI
+            // Trigger global refresh for UI immediately so it appears on screen without delay
             if (typeof (window as any).refreshQsoLogbookUi === 'function') {
                 (window as any).refreshQsoLogbookUi();
+            }
+
+            // Push to cloud instantly if enabled
+            if (wavelogEnabledRef.current && navigator.onLine) {
+                 try {
+                     const success = await CloudLogService.pushSingleQSO(qsoRecord, {
+                         wavelogEnabled: wavelogEnabledRef.current,
+                         wavelogUrl: wavelogUrlRef.current,
+                         wavelogApiKey: wavelogApiKeyRef.current,
+                         wavelogStationProfileId: wavelogStationProfileIdRef.current
+                     });
+                     if (success) {
+                         await logBook.updateQSO({ ...qsoRecord, synced: true });
+                         
+                         // Refresh UI again to update the synced cloud status icon on screen
+                         if (typeof (window as any).refreshQsoLogbookUi === 'function') {
+                             (window as any).refreshQsoLogbookUi();
+                         }
+                     }
+                 } catch (cloudErr) {
+                     console.error("Failed to push QSO dynamically to Wavelog", cloudErr);
+                 }
             }
         } catch (err) {
             console.error("Failed to save QSO automatically", err);

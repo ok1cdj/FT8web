@@ -18,6 +18,17 @@ export function LogBookViewer({
     const [qsos, setQsos] = useState<QSO[]>([]);
     const [deletingId, setDeletingId] = useState<number | null>(null);
     const [isSyncing, setIsSyncing] = useState(false);
+    const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+
+    const handleDeleteAll = async () => {
+        try {
+            await logBook.clearLogBook();
+            setConfirmDeleteAll(false);
+            await fetchQsos();
+        } catch (err) {
+            console.error('Failed to wipe logbook', err);
+        }
+    };
 
     const fetchQsos = async () => {
         try {
@@ -64,40 +75,81 @@ export function LogBookViewer({
             <div className="flex justify-between items-center shrink-0 py-2 pt-3 px-3">
                 <div className="flex items-center gap-3">
                     <h3 className="text-xs font-bold text-text-main uppercase tracking-widest text-[#4caf50]">QSO Logbook</h3>
-                    {wavelogEnabled && (
-                        <div className="flex items-center gap-2">
-                            {unsyncedCount > 0 ? (
-                                <div className="flex items-center gap-2 bg-amber-500/20 border border-amber-500/50 text-amber-500 rounded px-2 py-0.5 text-[10px] font-bold uppercase">
-                                    <span>☁️ {unsyncedCount} pending sync</span>
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                    {wavelogEnabled ? (
+                        <button 
+                            onClick={handleSync}
+                            disabled={isSyncing || unsyncedCount === 0}
+                            className={`text-[10px] font-bold px-3 py-1.5 rounded uppercase tracking-wider transition-colors shadow-sm cursor-pointer border ${
+                                unsyncedCount > 0 
+                                ? 'bg-amber-500/10 border-amber-500/40 text-amber-500 hover:bg-amber-500 hover:text-white hover:border-amber-500' 
+                                : 'bg-btn border-border-input text-text-muted opacity-50 cursor-not-allowed'
+                            }`}
+                            title={unsyncedCount > 0 ? `Sync ${unsyncedCount} unsynced QSOs to Wavelog` : 'All QSOs are Synced'}
+                        >
+                            {isSyncing ? 'Syncing...' : `Sync All (${unsyncedCount})`}
+                        </button>
+                    ) : (
+                        <button 
+                            disabled
+                            className="bg-btn border border-border-input text-text-muted opacity-40 text-[10px] font-bold px-3 py-1.5 rounded uppercase tracking-wider cursor-not-allowed"
+                            title="Enable Wavelog Cloud Sync in configuration settings to sync"
+                        >
+                            Sync All
+                        </button>
+                    )}
+                    <button 
+                        onClick={handleExport}
+                        className="bg-btn border border-border-input hover:bg-btn-hover hover:border-[#4caf50] hover:text-[#4caf50] text-[10px] font-bold px-3 py-1.5 rounded uppercase tracking-wider text-text-main transition-colors shadow-sm cursor-pointer"
+                    >
+                        Export ADIF
+                    </button>
+                    <div className="relative inline-block">
+                        {qsos.length > 0 ? (
+                            confirmDeleteAll ? (
+                                <div className="flex items-center gap-1 bg-red-600/10 border border-red-500/30 rounded px-1.5 py-0.5">
+                                    <span className="text-[9px] text-red-500 font-bold uppercase mr-1">Confirm Wipe?</span>
                                     <button 
-                                        onClick={handleSync}
-                                        disabled={isSyncing}
-                                        className="text-amber-400 hover:text-amber-300 underline ml-1 cursor-pointer disabled:opacity-50"
+                                        onClick={handleDeleteAll}
+                                        className="bg-red-600 hover:bg-red-700 text-white font-bold px-1.5 py-0.5 rounded text-[9px] uppercase cursor-pointer"
                                     >
-                                        {isSyncing ? 'Syncing...' : 'Sync Now'}
+                                        Yes
+                                    </button>
+                                    <button 
+                                        onClick={() => setConfirmDeleteAll(false)}
+                                        className="bg-btn border border-border-input text-text-main px-1.5 py-0.5 rounded text-[9px] uppercase cursor-pointer"
+                                    >
+                                        No
                                     </button>
                                 </div>
                             ) : (
-                                <div className="flex items-center gap-1 text-text-muted text-[10px] uppercase font-bold px-2 py-0.5">
-                                    <span className="opacity-70">☁️ Synced</span>
-                                </div>
-                            )}
-                        </div>
-                    )}
+                                <button 
+                                    onClick={() => setConfirmDeleteAll(true)}
+                                    className="bg-btn border border-red-500/20 hover:bg-red-600 hover:text-white hover:border-red-600 text-red-500 text-[10px] font-bold px-3 py-1.5 rounded uppercase tracking-wider transition-colors shadow-sm cursor-pointer"
+                                    title="Delete all local QSOs permanently"
+                                >
+                                    Wipe Log
+                                </button>
+                            )
+                        ) : (
+                            <button 
+                                disabled
+                                className="bg-btn border border-red-500/10 text-red-500 opacity-40 text-[10px] font-bold px-3 py-1.5 rounded uppercase tracking-wider cursor-not-allowed"
+                                title="Logbook is already empty"
+                            >
+                                Wipe Log
+                            </button>
+                        )}
+                    </div>
                 </div>
-                <button 
-                    onClick={handleExport}
-                    className="bg-btn border border-border-input hover:bg-btn-hover hover:border-[#4caf50] hover:text-[#4caf50] text-[10px] font-bold px-3 py-1 rounded uppercase tracking-wider text-text-main transition-colors shadow-sm cursor-pointer"
-                >
-                    Export ADIF
-                </button>
             </div>
             <div className="overflow-y-auto flex-1 text-xs px-3 pb-3 h-48 custom-scrollbar">
                 {qsos.length === 0 ? (
                     <div className="text-center text-text-muted mt-8 italic text-[11px]">No QSOs logged yet.</div>
                 ) : (
                     <div className="w-full">
-                        <div className="sticky top-0 bg-panel text-text-muted text-[10px] uppercase tracking-wider grid grid-cols-[130px_70px_50px_40px_40px_60px_1fr] gap-2 pb-2 mb-1 border-b border-border-subtle z-10 font-bold text-left">
+                        <div className="sticky top-0 bg-panel text-text-muted text-[10px] uppercase tracking-wider grid grid-cols-[130px_100px_50px_40px_40px_60px_1fr] gap-2 pb-2 mb-1 border-b border-border-subtle z-10 font-bold text-left">
                             <div className="text-left">Date/Time (UTC)</div>
                             <div className="text-left">Call</div>
                             <div className="text-left">Band</div>
@@ -108,9 +160,19 @@ export function LogBookViewer({
                         </div>
                         <div className="flex flex-col">
                             {qsos.map(qso => (
-                                <div key={qso.id} className="grid grid-cols-[130px_70px_50px_40px_40px_60px_1fr] gap-2 py-1.5 border-b border-border-subtle/30 hover:bg-btn transition-colors items-center text-[11px] text-left">
+                                <div key={qso.id} className="grid grid-cols-[130px_100px_50px_40px_40px_60px_1fr] gap-2 py-1.5 border-b border-border-subtle/30 hover:bg-btn transition-colors items-center text-[11px] text-left">
                                     <div className="font-mono text-text-muted truncate text-left">{qso.qso_date} {qso.time_on}</div>
-                                    <div className="font-bold text-sky-600 dark:text-sky-400 truncate tracking-wide text-left">{qso.call}</div>
+                                    <div className="font-bold text-sky-600 dark:text-sky-400 truncate tracking-wide text-left flex items-center gap-1.5 min-w-0">
+                                        <span className="truncate">{qso.call}</span>
+                                        {wavelogEnabled && (
+                                            <span 
+                                                className={`text-[10px] select-none shrink-0 ${qso.synced ? 'text-green-500' : 'text-zinc-500 opacity-40'}`} 
+                                                title={qso.synced ? "Uploaded to Wavelog / Synced" : "Pending Cloud Upload"}
+                                            >
+                                                ☁️
+                                            </span>
+                                        )}
+                                    </div>
                                     <div className="text-text-muted text-left">{qso.band}</div>
                                     <div className="text-green-600 dark:text-[#4caf50] font-mono text-left">{qso.rst_sent}</div>
                                     <div className="text-red-650 dark:text-red-450 font-mono text-left">{qso.rst_rcvd}</div>

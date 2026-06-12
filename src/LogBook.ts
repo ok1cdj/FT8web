@@ -73,6 +73,17 @@ export class LogBook {
         });
     }
 
+    async clearLogBook(): Promise<void> {
+        await this.init();
+        return new Promise((resolve, reject) => {
+            const transaction = this.db!.transaction(this.storeName, 'readwrite');
+            const store = transaction.objectStore(this.storeName);
+            const request = store.clear();
+            request.onsuccess = () => resolve();
+            request.onerror = (e) => reject((e.target as IDBRequest).error);
+        });
+    }
+
     async getAllQSOs(): Promise<QSO[]> {
         await this.init();
         return new Promise((resolve, reject) => {
