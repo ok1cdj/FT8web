@@ -1,5 +1,7 @@
 # Web FT8 Client
 
+**Public App Available Here:** [https://ft8web.ok1cdj.com/](https://ft8web.ok1cdj.com/)
+
 A production-ready Amateur Radio FT8 client running entirely in the browser using the Web Audio API, an integrated FSM for automated contacts, and the `@e04/ft8ts` DSP library.
 
 ## Features
