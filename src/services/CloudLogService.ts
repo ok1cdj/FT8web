@@ -55,9 +55,12 @@ export class CloudLogService {
     }
 
     try {
-      const endpoint = `${this.getBaseUrl(config.wavelogUrl)}/api/qso`;
-      // Wavelog / Cloudlog actually expect 'key', 'type', and 'string'. We also include 'api_key' and 'adif' for compatibility.
+      const targetUrl = `${this.getBaseUrl(config.wavelogUrl)}/api/qso`;
+      // We route the request through the local proxy to bypass CORS
+      const endpoint = '/api/log-proxy';
+      
       const payload = {
+        targetUrl: targetUrl,
         key: config.wavelogApiKey,
         api_key: config.wavelogApiKey,
         type: 'adif',
@@ -114,8 +117,12 @@ export class CloudLogService {
    */
   static async testWavelogConnection(url: string, apiKey: string): Promise<{ success: boolean; message: string }> {
     try {
-      const endpoint = `${this.getBaseUrl(url)}/api/qso`;
+      const targetUrl = `${this.getBaseUrl(url)}/api/qso`;
+      // Route test through the proxy to bypass CORS
+      const endpoint = '/api/log-proxy';
+      
       const payload = {
+        targetUrl: targetUrl,
         key: apiKey,
         api_key: apiKey,
         type: 'adif',

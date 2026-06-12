@@ -8,7 +8,7 @@ import FT8FSM, { QueuedCaller } from './FT8FSM';
 
 import { LogBookViewer } from './components/LogBookViewer';
 import { VersionInfo } from './components/VersionInfo';
-import { logBook } from './LogBook';
+import { logBook, QSO } from './LogBook';
 import { CloudLogService } from './services/CloudLogService';
 
 export interface FT8DecodedMessage {
@@ -1037,7 +1037,7 @@ export default function App() {
 
             const currentVfo = vfoFreqRef.current;
 
-            const qsoRecord = {
+            const qsoRecord: QSO = {
                 call: qsoData.call,
                 qso_date: dateStr,
                 time_on: timeStr,
