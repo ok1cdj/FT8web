@@ -11,6 +11,7 @@ export interface QSO {
     rst_rcvd: string;
     gridsquare: string;
     timestamp: number;
+    synced?: boolean;
 }
 
 export class LogBook {
@@ -18,6 +19,7 @@ export class LogBook {
     private storeName = 'qsos';
     private version = 1;
     private db: IDBDatabase | null = null;
+
 
     async init(): Promise<void> {
         if (this.db) return;
@@ -45,6 +47,17 @@ export class LogBook {
             const store = transaction.objectStore(this.storeName);
             const request = store.add(qso);
             request.onsuccess = (e) => resolve((e.target as IDBRequest).result as number);
+            request.onerror = (e) => reject((e.target as IDBRequest).error);
+        });
+    }
+
+    async updateQSO(qso: QSO): Promise<void> {
+        await this.init();
+        return new Promise((resolve, reject) => {
+            const transaction = this.db!.transaction(this.storeName, 'readwrite');
+            const store = transaction.objectStore(this.storeName);
+            const request = store.put(qso);
+            request.onsuccess = () => resolve();
             request.onerror = (e) => reject((e.target as IDBRequest).error);
         });
     }

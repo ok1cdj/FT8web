@@ -9,6 +9,7 @@ import FT8FSM, { QueuedCaller } from './FT8FSM';
 import { LogBookViewer } from './components/LogBookViewer';
 import { VersionInfo } from './components/VersionInfo';
 import { logBook } from './LogBook';
+import { CloudLogService } from './services/CloudLogService';
 
 export interface FT8DecodedMessage {
   time: string;
@@ -135,6 +136,16 @@ export default function App() {
     return saved ? Number(saved) : 50;
   });
 
+  const [wavelogEnabled, setWavelogEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('ft8_wavelogEnabled') === 'true';
+  });
+  const [wavelogUrl, setWavelogUrl] = useState<string>(() => {
+    return localStorage.getItem('ft8_wavelogUrl') || '';
+  });
+  const [wavelogApiKey, setWavelogApiKey] = useState<string>(() => {
+    return localStorage.getItem('ft8_wavelogApiKey') || '';
+  });
+
   const [decodeStats, setDecodeStats] = useState<{ count: number, durationMs: number } | null>(null);
 
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -196,7 +207,10 @@ export default function App() {
       localStorage.setItem('ft8_catBaudRate', catBaudRate.toString());
       localStorage.setItem('ft8_icomAddress', icomAddress);
       localStorage.setItem('ft8_maxLogEntries', maxLogEntries.toString());
-  }, [myCall, myGrid, txFreq, decodeDepth, maxRetries, finalMessageMode, catMode, catBaudRate, icomAddress, maxLogEntries]);
+      localStorage.setItem('ft8_wavelogEnabled', String(wavelogEnabled));
+      localStorage.setItem('ft8_wavelogUrl', wavelogUrl);
+      localStorage.setItem('ft8_wavelogApiKey', wavelogApiKey);
+  }, [myCall, myGrid, txFreq, decodeDepth, maxRetries, finalMessageMode, catMode, catBaudRate, icomAddress, maxLogEntries, wavelogEnabled, wavelogUrl, wavelogApiKey]);
 
   // UI State
   const [showSettings, setShowSettings] = useState(false);
@@ -400,6 +414,25 @@ export default function App() {
       }
     };
   }, [catMode]);
+
+  // Cloudlog Syncing Hook
+  useEffect(() => {
+    const handleOnline = async () => {
+      if (wavelogEnabled) {
+        await CloudLogService.syncOfflineQueue({
+          wavelogEnabled,
+          wavelogUrl,
+          wavelogApiKey
+        });
+        // Trigger UI refresh
+        if (typeof (window as any).refreshQsoLogbookUi === 'function') {
+           (window as any).refreshQsoLogbookUi();
+        }
+      }
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [wavelogEnabled, wavelogUrl, wavelogApiKey]);
 
   // Refs for Worker Access
   const myCallRef = useRef<string>(myCall);
@@ -1004,7 +1037,7 @@ export default function App() {
 
             const currentVfo = vfoFreqRef.current;
 
-            await logBook.logQSO({
+            const qsoRecord = {
                 call: qsoData.call,
                 qso_date: dateStr,
                 time_on: timeStr,
@@ -1015,8 +1048,22 @@ export default function App() {
                 rst_sent: qsoData.rst_sent || "",
                 rst_rcvd: qsoData.rst_rcvd || "",
                 gridsquare: qsoData.grid || "",
-                timestamp: now.getTime()
-            });
+                timestamp: now.getTime(),
+                synced: false
+            };
+
+            const id = await logBook.logQSO(qsoRecord);
+            qsoRecord.id = id;
+
+            // Push to cloud instantly if enabled
+            if (wavelogEnabled && navigator.onLine) {
+                 const success = await CloudLogService.pushSingleQSO(qsoRecord, {
+                     wavelogEnabled, wavelogUrl, wavelogApiKey
+                 });
+                 if (success) {
+                     await logBook.updateQSO({ ...qsoRecord, synced: true });
+                 }
+            }
 
             // Trigger global refresh for UI
             if (typeof (window as any).refreshQsoLogbookUi === 'function') {
@@ -1585,7 +1632,12 @@ export default function App() {
 
       {/* Logbook Viewer Section */}
       <div className="w-full mt-3">
-         <LogBookViewer maxEntries={maxLogEntries} />
+         <LogBookViewer 
+            maxEntries={maxLogEntries} 
+            wavelogEnabled={wavelogEnabled} 
+            wavelogUrl={wavelogUrl} 
+            wavelogApiKey={wavelogApiKey} 
+         />
       </div>
 
       {showSettings && (
@@ -1753,6 +1805,73 @@ export default function App() {
                     {wakeLockEnabled ? 'Enabled' : 'Disabled'}
                  </button>
               </div>
+
+              <hr className="border-border-subtle my-4" />
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase tracking-widest text-[#8e9299]">Cloudlog / Wavelog</h3>
+                <button 
+                    onClick={() => setWavelogEnabled(!wavelogEnabled)}
+                    className={`bg-app border rounded px-3 py-1 text-xs font-mono focus:outline-none transition-colors ${wavelogEnabled ? 'border-[#4caf50] text-[#4caf50]' : 'border-border-input text-text-main'}`}
+                 >
+                    {wavelogEnabled ? 'Enabled' : 'Disabled'}
+                 </button>
+              </div>
+
+              {wavelogEnabled && (
+                <div className="flex flex-col gap-3 mt-2">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] uppercase tracking-widest text-text-muted">Server URL</label>
+                    <input 
+                      type="text" 
+                      value={wavelogUrl} 
+                      onChange={e => setWavelogUrl(e.target.value)} 
+                      className="bg-app border border-border-input rounded px-3 py-2 text-sm font-mono w-full focus:outline-none focus:border-[#4caf50] text-text-main" 
+                      placeholder="https://log.example.com"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] uppercase tracking-widest text-text-muted">API Key</label>
+                    <input 
+                      type="password" 
+                      value={wavelogApiKey} 
+                      onChange={e => setWavelogApiKey(e.target.value)} 
+                      className="bg-app border border-border-input rounded px-3 py-2 text-sm font-mono w-full focus:outline-none focus:border-[#4caf50] text-text-main" 
+                      placeholder="Your API Key"
+                    />
+                  </div>
+                  <button 
+                    onClick={async () => {
+                        const btn = document.getElementById('btn-wavelog-test');
+                        if (btn) btn.innerText = 'Testing...';
+                        const result = await CloudLogService.testWavelogConnection(wavelogUrl, wavelogApiKey);
+                        if (btn) {
+                            if (result.success) {
+                                btn.innerText = 'Success!';
+                                btn.className = 'w-full bg-[#4caf50]/20 border border-[#4caf50] text-[#4caf50] rounded px-3 py-2 text-xs font-mono font-bold transition-colors';
+                                setTimeout(() => {
+                                    btn.innerText = 'Test Connection';
+                                    btn.className = 'w-full bg-app border border-border-input text-text-main hover:bg-[#4caf50] hover:text-white hover:border-[#4caf50] rounded px-3 py-2 text-xs font-mono font-bold transition-colors';
+                                }, 3000);
+                            } else {
+                                btn.innerText = result.message.length > 50 ? 'Error (Hover for details)' : result.message;
+                                btn.title = result.message; // tool tip
+                                btn.className = 'w-full bg-red-500/20 border border-red-500 text-red-500 rounded px-3 py-2 text-xs font-mono font-bold transition-colors truncate';
+                                setTimeout(() => {
+                                    btn.innerText = 'Test Connection';
+                                    btn.title = '';
+                                    btn.className = 'w-full bg-app border border-border-input text-text-main hover:bg-[#4caf50] hover:text-white hover:border-[#4caf50] rounded px-3 py-2 text-xs font-mono font-bold transition-colors';
+                                }, 6000);
+                            }
+                        }
+                    }}
+                    id="btn-wavelog-test"
+                    disabled={!wavelogUrl || !wavelogApiKey}
+                    className="w-full bg-app border border-border-input text-text-main hover:bg-[#4caf50] hover:text-white hover:border-[#4caf50] disabled:opacity-50 disabled:hover:bg-app disabled:hover:border-border-input disabled:hover:text-text-main rounded px-3 py-2 text-xs font-mono font-bold transition-colors"
+                  >
+                    Test Connection
+                  </button>
+                </div>
+              )}
               
               <hr className="border-border-subtle my-4" />
               

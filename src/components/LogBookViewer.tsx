@@ -1,9 +1,21 @@
 import React, { useEffect, useState } from 'react';
 import { logBook, QSO } from '../LogBook';
+import { CloudLogService } from '../services/CloudLogService';
 
-export function LogBookViewer({ maxEntries }: { maxEntries: number }) {
+export function LogBookViewer({ 
+    maxEntries, 
+    wavelogEnabled, 
+    wavelogUrl, 
+    wavelogApiKey 
+}: { 
+    maxEntries: number, 
+    wavelogEnabled: boolean, 
+    wavelogUrl: string, 
+    wavelogApiKey: string 
+}) {
     const [qsos, setQsos] = useState<QSO[]>([]);
     const [deletingId, setDeletingId] = useState<number | null>(null);
+    const [isSyncing, setIsSyncing] = useState(false);
 
     const fetchQsos = async () => {
         try {
@@ -36,10 +48,41 @@ export function LogBookViewer({ maxEntries }: { maxEntries: number }) {
         await logBook.exportToADIF();
     };
 
+    const handleSync = async () => {
+        setIsSyncing(true);
+        await CloudLogService.syncOfflineQueue({ wavelogEnabled, wavelogUrl, wavelogApiKey });
+        await fetchQsos();
+        setIsSyncing(false);
+    };
+
+    const unsyncedCount = qsos.filter(q => q.synced === false).length;
+
     return (
         <div className="logbook-vessel flex flex-col bg-panel border gap-2 border-border-subtle rounded mt-2 px-1">
             <div className="flex justify-between items-center shrink-0 py-2 pt-3 px-3">
-                <h3 className="text-xs font-bold text-text-main uppercase tracking-widest text-[#4caf50]">QSO Logbook</h3>
+                <div className="flex items-center gap-3">
+                    <h3 className="text-xs font-bold text-text-main uppercase tracking-widest text-[#4caf50]">QSO Logbook</h3>
+                    {wavelogEnabled && (
+                        <div className="flex items-center gap-2">
+                            {unsyncedCount > 0 ? (
+                                <div className="flex items-center gap-2 bg-amber-500/20 border border-amber-500/50 text-amber-500 rounded px-2 py-0.5 text-[10px] font-bold uppercase">
+                                    <span>☁️ {unsyncedCount} pending sync</span>
+                                    <button 
+                                        onClick={handleSync}
+                                        disabled={isSyncing}
+                                        className="text-amber-400 hover:text-amber-300 underline ml-1 cursor-pointer disabled:opacity-50"
+                                    >
+                                        {isSyncing ? 'Syncing...' : 'Sync Now'}
+                                    </button>
+                                </div>
+                            ) : (
+                                <div className="flex items-center gap-1 text-text-muted text-[10px] uppercase font-bold px-2 py-0.5">
+                                    <span className="opacity-70">☁️ Synced</span>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
                 <button 
                     onClick={handleExport}
                     className="bg-btn border border-border-input hover:bg-btn-hover hover:border-[#4caf50] hover:text-[#4caf50] text-[10px] font-bold px-3 py-1 rounded uppercase tracking-wider text-text-main transition-colors shadow-sm cursor-pointer"
