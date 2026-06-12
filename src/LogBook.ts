@@ -95,8 +95,7 @@ export class LogBook {
             processField("time_on", qso.time_on);
             processField("band", qso.band);
             processField("freq", qso.freq);
-            processField("mode", qso.mode);
-            processField("submode", qso.submode);
+            processField("mode", "FT8");
             processField("rst_sent", qso.rst_sent);
             processField("rst_rcvd", qso.rst_rcvd);
             processField("gridsquare", qso.gridsquare);

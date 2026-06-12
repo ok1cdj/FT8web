@@ -7,6 +7,7 @@ import { UniversalSerialPort } from './UniversalSerialPort';
 import FT8FSM, { QueuedCaller } from './FT8FSM';
 
 import { LogBookViewer } from './components/LogBookViewer';
+import { VersionInfo } from './components/VersionInfo';
 import { logBook } from './LogBook';
 
 export interface FT8DecodedMessage {
@@ -305,6 +306,8 @@ export default function App() {
 
   const selectBand = (hz: number) => {
     setVfoFreq(hz);
+    setRxLog([]);
+    setQsoLog([]);
     if (catRef.current && catMode !== 'manual') {
       catRef.current.setFrequency(hz).catch(e => console.error("CAT Set Freq Error:", e));
     }
@@ -1007,8 +1010,8 @@ export default function App() {
                 time_on: timeStr,
                 band: getBandFromFreq(currentVfo),
                 freq: currentVfo / 1e6,
-                mode: "MFSK",
-                submode: "FT8",
+                mode: "FT8",
+                submode: "",
                 rst_sent: qsoData.rst_sent || "",
                 rst_rcvd: qsoData.rst_rcvd || "",
                 gridsquare: qsoData.grid || "",
@@ -1847,6 +1850,8 @@ export default function App() {
           </div>
         </div>
       )}
+      
+      <VersionInfo />
     </div>
   );
 }

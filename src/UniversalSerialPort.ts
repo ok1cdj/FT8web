@@ -222,7 +222,7 @@ export class UniversalSerialPort {
   static async requestPort(options: { filters: any[] }): Promise<UniversalSerialPortInstance> {
     const isAndroid = /Android/i.test(navigator.userAgent);
     
-    if (!isAndroid && navigator.serial) {
+    if (!isAndroid && (navigator as any).serial) {
       const port = await (navigator as any).serial.requestPort(options);
       return new NativeSerialPortWrapper(port);
     }
