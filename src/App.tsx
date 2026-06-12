@@ -3,6 +3,7 @@ import { Activity, Settings, X, HelpCircle } from 'lucide-react';
 import { getCaptureWorkletUrl } from './AudioWorkletBlob';
 import { encodeFT8 } from '@e04/ft8ts';
 import CatManager from './CatManager.js';
+import { UniversalSerialPort } from './UniversalSerialPort';
 import FT8FSM, { QueuedCaller } from './FT8FSM';
 
 import { LogBookViewer } from './components/LogBookViewer';
@@ -315,20 +316,14 @@ export default function App() {
 
   const handleSelectSerialPort = async () => {
     try {
-      if (!('serial' in navigator)) {
-        setCatTestResult("Web Serial API not supported in this browser. Try opening in a new tab or use Chrome/Edge.");
-        return;
-      }
-
-      // Explicit USB Vendor ID filters for Android & general WebUSB-to-Serial compatibility
       const serialFilters = [
-        { usbVendorId: 0x1A86, vendorId: 6790 },  // CH340 / CH341 (Tvůj převodník!)
-        { usbVendorId: 0x10C4, vendorId: 4292 },  // Silicon Labs CP210x (Icom IC-7300)
-        { usbVendorId: 0x0403, vendorId: 1027 },  // FTDI Chips
-        { usbVendorId: 0x067B, vendorId: 1659 }   // Prolific PL2303
+        { usbVendorId: 0x10C4, vendorId: 4292 }, // Silicon Labs CP210x
+        { usbVendorId: 0x1A86, vendorId: 6790 }, // Qinheng CH34x
+        { usbVendorId: 0x0403, vendorId: 1027 }, // FTDI
+        { usbVendorId: 0x067B, vendorId: 1659 }  // Prolific PL2303
       ];
 
-      const port = await (navigator as any).serial.requestPort({ filters: serialFilters });
+      const port = await UniversalSerialPort.requestPort({ filters: serialFilters });
       
       // Cleanly disconnect old port before switching to a new selected port
       if (catRef.current) {
@@ -339,12 +334,8 @@ export default function App() {
       setSerialPort(port);
       setCatTestResult("Port selected successfully. Ready to test.");
     } catch (e: any) {
-      console.error(e);
-      let errorMsg = "Error selecting port: " + e.message;
-      if (e.message?.includes('permission') || e.message?.includes('disallowed')) {
-          errorMsg += ". Try opening the app in a new tab.";
-      }
-      setCatTestResult(errorMsg);
+      console.error("Failed to select serial port:", e);
+      setCatTestResult(`Port selection failed: ${e.message || e}`);
     }
   };
 
