@@ -19,6 +19,35 @@ export function LogBookViewer({
     const [deletingId, setDeletingId] = useState<number | null>(null);
     const [isSyncing, setIsSyncing] = useState(false);
     const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+    const [inlineSyncingIds, setInlineSyncingIds] = useState<Record<number, boolean>>({});
+
+    const handleSingleQsoSync = async (qso: QSO) => {
+        if (!qso.id) return;
+        setInlineSyncingIds(prev => ({ ...prev, [qso.id!]: true }));
+        try {
+            const success = await CloudLogService.pushSingleQSO(qso, {
+                wavelogEnabled,
+                wavelogUrl,
+                wavelogApiKey,
+                wavelogStationProfileId
+            });
+            if (success) {
+                await logBook.updateQSO({ ...qso, synced: true });
+                await fetchQsos();
+                console.log(`[Wavelog Sync] Manual single sync of QSO ID ${qso.id} succeeded.`);
+            } else {
+                console.error(`[Wavelog Sync] Manual single sync of QSO ID ${qso.id} failed. Feel free to inspect the console logs above.`);
+            }
+        } catch (err) {
+            console.error('Failed to manually sync single QSO', err);
+        } finally {
+            setInlineSyncingIds(prev => {
+                const copy = { ...prev };
+                delete copy[qso.id!];
+                return copy;
+            });
+        }
+    };
 
     const handleDeleteAll = async () => {
         try {
@@ -194,16 +223,38 @@ export function LogBookViewer({
                                                 </button>
                                             </div>
                                         ) : (
-                                            <button 
-                                                onClick={() => setDeletingId(qso.id!)}
-                                                className="text-red-500 hover:text-red-400 hover:bg-red-500/10 p-1 rounded transition-colors group flex items-center justify-center transform active:scale-95 cursor-pointer"
-                                                title="Delete QSO"
-                                            >
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="opacity-70 group-hover:opacity-100">
-                                                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                                                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                                                </svg>
-                                            </button>
+                                            <div className="flex items-center gap-1.5">
+                                                {wavelogEnabled && (
+                                                    <button 
+                                                        onClick={() => handleSingleQsoSync(qso)}
+                                                        disabled={inlineSyncingIds[qso.id!]}
+                                                        className={`p-1 rounded transition-colors group flex items-center justify-center transform active:scale-95 cursor-pointer text-amber-500 hover:bg-amber-500/10 ${inlineSyncingIds[qso.id!] ? 'animate-pulse opacity-60' : ''}`}
+                                                        title="Force Single Sync/Upload this QSO to Wavelog"
+                                                    >
+                                                        {inlineSyncingIds[qso.id!] ? (
+                                                            <svg className="animate-spin text-amber-500" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                                                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+                                                            </svg>
+                                                        ) : (
+                                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="opacity-70 group-hover:opacity-100">
+                                                                <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" />
+                                                                <path d="M12 11.5V19" />
+                                                                <path d="m15 15-3-3-3 3" />
+                                                            </svg>
+                                                        )}
+                                                    </button>
+                                                )}
+                                                <button 
+                                                    onClick={() => setDeletingId(qso.id!)}
+                                                    className="text-red-500 hover:text-red-400 hover:bg-red-500/10 p-1 rounded transition-colors group flex items-center justify-center transform active:scale-95 cursor-pointer"
+                                                    title="Delete QSO"
+                                                >
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="opacity-70 group-hover:opacity-100">
+                                                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                                                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                                                    </svg>
+                                                </button>
+                                            </div>
                                         )}
                                     </div>
                                 </div>

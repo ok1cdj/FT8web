@@ -52,24 +52,35 @@ export class CloudLogService {
    */
   static async pushSingleQSO(qso: QSO, config: CloudLogConfig): Promise<boolean> {
     if (!config.wavelogEnabled || !config.wavelogUrl || !config.wavelogApiKey) {
+      console.warn('[Wavelog Debug] Upload skipped because Wavelog integration is disabled or missing credentials.');
       return false;
     }
 
-    try {
-      const targetUrl = `${this.getBaseUrl(config.wavelogUrl)}/api/qso`;
-      // We route the request through the local proxy to bypass CORS
-      const endpoint = '/api/log-proxy';
-      
-      const payload = {
-        targetUrl: targetUrl,
-        key: config.wavelogApiKey,
-        api_key: config.wavelogApiKey,
-        station_profile_id: config.wavelogStationProfileId,
-        type: 'adif',
-        string: this.generateAdif(qso),
-        adif: this.generateAdif(qso)
-      };
+    const targetUrl = `${this.getBaseUrl(config.wavelogUrl)}/api/qso`;
+    const endpoint = '/api/log-proxy';
+    const adifData = this.generateAdif(qso);
+    
+    const payload = {
+      targetUrl: targetUrl,
+      key: config.wavelogApiKey,
+      api_key: config.wavelogApiKey,
+      station_profile_id: config.wavelogStationProfileId,
+      type: 'adif',
+      string: adifData,
+      adif: adifData
+    };
 
+    console.log(`[Wavelog Debug] Attempting to push QSO for ${qso.call} to ${targetUrl}`, {
+      qsoDate: qso.qso_date,
+      timeOn: qso.time_on,
+      band: qso.band,
+      rst_sent: qso.rst_sent,
+      rst_rcvd: qso.rst_rcvd,
+      gridsquare: qso.gridsquare,
+      adifPayload: adifData
+    });
+
+    try {
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -79,12 +90,43 @@ export class CloudLogService {
         body: JSON.stringify(payload)
       });
 
+      console.log(`[Wavelog Debug] Received HTTP status code: ${response.status} ${response.statusText}`);
+
       if (response.ok) {
+        let responseData: any = {};
+        try {
+          responseData = await response.json();
+          console.log('[Wavelog Debug] API JSON Response parsed successfully:', responseData);
+        } catch (jsonErr) {
+          console.warn('[Wavelog Debug] Response was ok, but failed to parse response body as JSON. Assuming success.', jsonErr);
+          return true;
+        }
+
+        // Standard Wavelog/Cloudlog API keys failures can return status: "failed" or similar within 200 OK
+        if (responseData && (responseData.status === 'failed' || responseData.status === 'error' || responseData.status === 'auth_failed')) {
+          console.error('[Wavelog Debug] QSO Upload failed according to API response content:', {
+            status: responseData.status,
+            reason: responseData.reason || responseData.message || 'unknown error reason'
+          });
+          return false;
+        }
+
+        console.log(`[Wavelog Debug] QSO for ${qso.call} successfully pushed and verified by Wavelog API.`);
         return true;
+      } else {
+        let errorBody: any = null;
+        try {
+          errorBody = await response.json();
+        } catch (_) {
+          try {
+            errorBody = await response.text();
+          } catch (_) {}
+        }
+        console.error(`[Wavelog Debug] Server returned failed HTTP response. Status: ${response.status}`, errorBody);
+        return false;
       }
-      return false;
     } catch (e) {
-      console.error('Failed to push QSO to Cloudlog/Wavelog', e);
+      console.error('[Wavelog Debug] Network or unexpected exception occurred during QSO push:', e);
       return false;
     }
   }
