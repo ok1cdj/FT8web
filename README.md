@@ -2,6 +2,9 @@
 
 **Public App Available Here:** [https://ft8web.ok1cdj.com/](https://ft8web.ok1cdj.com/)
 
+**Report Issues:** [GitHub Issues / Help](https://github.com/ok1cdj/FT8web)  
+**Support the Project:** [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Become%20a%20Supporter-FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/ok1cdj)
+
 A production-ready Amateur Radio FT8 client running entirely in the browser using the Web Audio API, an integrated FSM for automated contacts, and the `@e04/ft8ts` DSP library.
 
 ## Features
@@ -53,3 +56,16 @@ To run the tests:
 - **Hardware Integration Layer:** Custom `UniversalSerialPort` acting as an abstraction over native Web Serial API capability and direct Android `WebUSB` control transfers, facilitating Android USB-OTG connectivity for amateur radio transceivers.
 - **DSP Engine:** `@e04/ft8ts` (Running in a dedicated Web Worker `ft8-worker.ts`)
 - **Audio Pipeline:** `AudioWorkletNode` (`AudioWorkletBlob.ts`) for raw sample accumulation (avoiding main thread drops).
+
+## 🗺️ Roadmap / Upcoming Features
+- [ ] Intensive testing with more radios
+- [ ] FT4 Mode support (7.5s T/R cycles via `@e04/ft8ts` mode switching)
+- [ ] Built-in better logbook
+
+### Tested Radios
+- **IC-7300** (Success)
+- **IC-705** (Success)
+
+### Hardware Testing Feedback
+We need to test Kenwood and QDX transceivers. If you have success running this web app with your radio model, **please report it to us by opening an issue!**
+
