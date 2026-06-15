@@ -15,6 +15,7 @@ A production-ready Amateur Radio FT8 client running entirely in the browser usin
 - **Band Activity & Active QSO:** Separated global logs and targeted incoming/outgoing QSO messages for clear visibility.
 - **Hardware VOX Compatible:** Audio generation uses a hard-start envelope to assure VOX will work natively as an alternative to CAT control.
 - **Live Waterfall:** Web Audio API AnalyserNode rendering a high-contrast waterfall focused tightly on the SSB filter bandwidth (0 Hz - 3000 Hz).
+- **Wavelog & Cloudlog API Logging:** Secure, real-time logging to cloud systems (Wavelog / Cloudlog) with a built-in proxy bypass to protect secret API keys, real-time status reporting, manual single-entry sync buttons, and batch sync commands.
 - **Mobile Testing & iOS/Android Support:** Built with strict user-interaction requirements for audio contexts to support iOS Safari. Embedded Eruda developer console accessible via `?debug=true` for advanced on-device DSP/CAT protocol debugging.
 
 ## Testing with a Real Radio (Hardware Setup)
@@ -50,6 +51,24 @@ To run the tests:
 1. Navgiate to the [`/fsm_test_runner.html`](/fsm_test_runner.html) route in your browser (e.g. `http://localhost:3000/fsm_test_runner.html` or the equivalent preview URL).
 2. The browser will automatically run the validation suites, including Success Paths, Timeout handling, and caller distance calculations via the Haversine formula.
 3. Review the on-screen logs for green `PASS` and red `FAIL` assertions.
+
+## Wavelog & Cloudlog Integration
+
+Log your FT8 QSOs automatically with **Wavelog** or **Cloudlog**:
+- **Real-time Synchronization:** When configured, every finished QSO from your automated finite state machine (FSM) is pushed automatically.
+- **Manual Force-Sync Actions:** If you did not have internet during the QSO, or if the initial API connection failed, you can retry at any time:
+  - **Batch Sync:** In the Logbook Viewer section, select **Sync All** to queue all outstanding logs.
+  - **Single Sync:** Click the dedicated cloud-upload icon next to any specific QSO row in the log list to manually upload the selected record.
+- **Detailed Console Debugging:** To help troubleshoot failed submissions, the client includes explicit debug telemetry. Open the browser developer tools console to inspect exact payloads, ADIF format strings, HTTP status codes, and server return messages.
+- **Secure Server Proxy (`/api/log-proxy`):** To avoid revealing your confidential read/write API Keys in the browser or getting blocked by browser Cross-Origin Resource Sharing (CORS) limits, all requests are securely proxied on the server.
+
+### Setup Instructions
+1. Open the **Station Configuration** (Settings gear icon).
+2. Set **Wavelog Cloud Sync** to **Enabled**.
+3. Input your **Wavelog Instance URL** (e.g. `https://log.example.com` or `https://log.sv0syh.eu`).
+4. Enter your **Wavelog API Key** (`wl...` or your standard API key).
+5. Enter your **Station Profile ID** (the corresponding numeric location profile).
+6. Save and successfully log your contacts!
 
 ## Architecture
 - **Frontend:** React 19 + Vite + Tailwind CSS v4

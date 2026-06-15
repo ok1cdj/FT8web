@@ -2000,6 +2000,12 @@ export default function App() {
                 <p>Enable TX by pressing Enable TX button. If you initiate a connection manually via CQ or answer from Band Activity, it will wait for the synchronization boundary to transmit.</p>
               </div>
 
+              <div>
+                <h3 className="font-bold text-green-600 dark:text-[#4caf50] mb-1">4. Wavelog & Cloudlog Integration</h3>
+                <p>You can seamlessly log your completed QSOs directly to your <strong>Wavelog</strong> or <strong>Cloudlog</strong> instance. In Settings, enable the integration and input your instance URL, API Key, and Station Profile ID.</p>
+                <p>QSOs are uploaded in real time. If an upload fails, you can use the **Sync All** button or click the manual cloud-upload action icon next to a specific logbook entry to re-trigger the upload. Troubleshooting output will exist in the browser developer tools console.</p>
+              </div>
+
               <div className="pt-4 mt-4 border-t border-border-subtle">
                 <h3 className="font-bold text-green-600 dark:text-[#4caf50] mb-1">Tested Radios & Feedback</h3>
                 <p className="mb-2"><strong>Officially Tested:</strong> IC-7300, IC-705.</p>
