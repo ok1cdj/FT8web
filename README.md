@@ -69,3 +69,11 @@ To run the tests:
 ### Hardware Testing Feedback
 We need to test Kenwood and QDX transceivers. If you have success running this web app with your radio model, **please report it to us by opening an issue!**
 
+## ⚖️ License & Attributions
+
+This project is open-source and licensed under the **GNU General Public License v3 (GPL v3)**.
+
+### Acknowledgments
+* **FT8/FT4 Protocols:** FT8 and FT4 are digital amateur radio modes designed for weak-signal communication, originally developed by **Joe Taylor (K1JT)** and **Steve Franke (K9AN)** as part of the WSJT-X suite.
+* **DSP Implementation:** This application utilizes the pure TypeScript DSP library `@e04/ft8ts`.
+

@@ -2009,8 +2009,12 @@ export default function App() {
               <div className="pt-4 mt-4 border-t border-border-subtle">
                 <h3 className="font-bold text-green-600 dark:text-[#4caf50] mb-1">Credits & License</h3>
                 <p className="mb-2">Created by <strong>Ondřej Koloničný, OK1CDJ</strong>.</p>
-                <p className="mb-2">This application utilizes the <a href="https://github.com/e04/ft8ts" target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 underline font-semibold">ft8ts</a> library for FT8 decoding and encoding.</p>
-                <p className="mb-4">Licensed under the <strong>GNU General Public License v3.0 (GPL-3.0)</strong>.</p>
+                <p className="mb-2">This project is open-source and licensed under the <strong>GNU General Public License v3 (GPL v3)</strong>.</p>
+                <h4 className="font-bold text-text-main mt-4 mb-2">Acknowledgments</h4>
+                <ul className="list-disc pl-5 mb-4 space-y-1 text-[11px] text-text-muted">
+                  <li><strong className="text-text-main">FT8/FT4 Protocols:</strong> FT8 and FT4 are digital amateur radio modes designed for weak-signal communication, originally developed by <strong>Joe Taylor (K1JT)</strong> and <strong>Steve Franke (K9AN)</strong> as part of the WSJT-X suite.</li>
+                  <li><strong className="text-text-main">DSP Implementation:</strong> This application utilizes the pure TypeScript DSP library <a href="https://github.com/e04/ft8ts" target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 underline font-semibold">@e04/ft8ts</a>.</li>
+                </ul>
 
                 <div className="flex flex-wrap gap-2 pt-2 border-t border-border-subtle/40">
                   <a 
