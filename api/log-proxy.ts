@@ -20,7 +20,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json({ status: 'failed', reason: 'Missing targetUrl in request body' });
       }
 
-      // Forward payload to the target URL
+      const apiKeyToForward = key || api_key;
+      const adifToForward = string || adif;
+
+      // Forward payload to the target URL with exact keys expected by Wavelog API
       const response = await fetch(targetUrl, {
         method: 'POST',
         headers: {
@@ -28,12 +31,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           'Accept': 'application/json'
         },
         body: JSON.stringify({
-          api_key,
-          key,
-          type,
-          string,
-          adif,
-          station_profile_id
+          key: apiKeyToForward,
+          station_profile_id: station_profile_id,
+          type: type || 'adif',
+          string: adifToForward
         })
       });
 
