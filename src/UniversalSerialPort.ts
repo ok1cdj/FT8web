@@ -262,7 +262,8 @@ export class UniversalSerialPort {
     const isAndroid = /Android/i.test(navigator.userAgent);
     
     if (!isAndroid && (navigator as any).serial) {
-      const port = await (navigator as any).serial.requestPort(options);
+      // For PC/desktop platform (Native Web Serial), we do not pass filters to let the browser prompt with all available ports.
+      const port = await (navigator as any).serial.requestPort();
       return new NativeSerialPortWrapper(port);
     }
     
