@@ -38,8 +38,9 @@ To use this application with a real transceiver, follow these steps:
 2. Allow browser permissions to use the microphone/audio input.
 3. Open the **Settings** menu to format your Station Configuration, CAT Protocol overrides (Kenwood, Icom, or QDX), and other preferences.
    - *Note on CAT:* If setting up CAT control (via Web Serial API), you MUST open the app in a new tab for the browser to allow serial port access (due to iframe permissions). Once in a new tab, select your port and use "Test CAT" to verify frequency reading.
+   - *Yaesu Protocol Mode:* Choose **Yaesu** mode for modern Yaesu transceivers (FT-710, FTDX10, FT-991A, FT-891). It uses 38400 baud, forces DTR/RTS signals HIGH for CAT authentication, and maps to standard ASCII commands.
    - *QDX Digital Transceiver Mode:* Choose **QDX** mode under CAT Protocol settings for a tailored Kenwood-cloned serial control profile matching standard hardware defaults (at 57600 baud rate).
-   - *Automated "Fake Split" (Rig Split):* When CAT is successfully connected in Kenwood or Icom modes, the system automatically uses a dual-stage asynchronous timing schedule during transmission. It dynamically increments/decrements your VFO frequency by blocks of 500 Hz while adjusting the Web Audio output tone proportionately. This ensures your transmitted audio stays locked within the cleanest center stage of your radio's SSB passband (at around 1500 Hz), preventing harmonic attenuation or clipping on the edges of the waterfall. Upon unkeying, the driver smoothly resets your radio's VFO back to its baseline frequency for reliable reception.
+   - *Automated "Fake Split" (Rig Split):* When CAT is successfully connected in Kenwood, Yaesu, or Icom modes, the system automatically uses a dual-stage asynchronous timing schedule during transmission. It dynamically increments/decrements your VFO frequency by blocks of 500 Hz while adjusting the Web Audio output tone proportionately. This ensures your transmitted audio stays locked within the cleanest center stage of your radio's SSB passband (at around 1500 Hz), preventing harmonic attenuation or clipping on the edges of the waterfall. Upon unkeying, the driver smoothly resets your radio's VFO back to its baseline frequency for reliable reception.
 4. Observe the **Input Level (VU)** indicator. Adjust your radio's output or your computer's input volume so the meter sits in the green/yellow zone (avoid clipping in the red).
 5. Watch the waterfall for FT8 signals. Decodes will appear at the :00, :15, :30, and :45 second marks in the UTC cycle.
 6. **CRITICAL:** Ensure your device's system clock is accurate (synchronized via NTP) as FT8 relies strictly on synchronized UTC time windows.
@@ -86,7 +87,9 @@ Log your FT8 QSOs automatically with **Wavelog** or **Cloudlog**:
 - **IC-705** (Success)
 
 ### Hardware Testing Feedback
-We need to test Kenwood and QDX transceivers. If you have success running this web app with your radio model, **please report it to us by opening an issue!**
+We have implemented and support serial CAT and PTT protocols for **Kenwood**, **Yaesu** (e.g., FT-710, FTDX10, FT-991A, FT-891), and **QDX** transceivers, but these configurations are currently **untested in real-world environments**.
+
+If you have success operating this web application with your radio model, or if you encounter any protocol mismatches, **please report your results by opening an issue on GitHub!**
 
 ## ⚖️ License & Attributions
 
