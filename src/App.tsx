@@ -162,7 +162,12 @@ export default function App() {
   }, [loadWorkedCallsigns]);
 
   const [catMode, setCatMode] = useState<'manual'|'kenwood'|'yaesu'|'qdx'|'icom'>(() => {
-    return (localStorage.getItem('ft8_catMode') as 'manual'|'kenwood'|'yaesu'|'qdx'|'icom') || 'manual';
+    const saved = localStorage.getItem('ft8_catMode') as 'manual'|'kenwood'|'yaesu'|'qdx'|'icom';
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    if (isAndroid && saved === 'qdx') {
+      return 'manual';
+    }
+    return saved || 'manual';
   });
   const [catBaudRate, setCatBaudRate] = useState<number>(() => {
     const saved = localStorage.getItem('ft8_catBaudRate');
@@ -384,7 +389,7 @@ export default function App() {
         { usbVendorId: 0x0403, vendorId: 1027 }, // FTDI
         { usbVendorId: 0x067B, vendorId: 1659 },  // Prolific PL2303
         { usbVendorId: 0x0C26, vendorId: 3110 },  // Icom Inc. IC-7300 MKII
-        { usbVendorId: 0x0483, vendorId: 1155 }  // STMicroelectronics (QDX) 
+        { usbVendorId: 0x0483, vendorId: 1155 }   // STMicroelectronics (QDX)
       ];
 
       const port = await UniversalSerialPort.requestPort({ filters: serialFilters });
@@ -1827,7 +1832,11 @@ export default function App() {
                   <option value="manual">Manual (No CAT / iOS)</option>
                   <option value="kenwood">Kenwood</option>
                   <option value="yaesu">Yaesu (FT-710, FTDX10, FT-991A, FT-891)</option>
-                  <option value="qdx">QDX</option>
+                  {/Android/i.test(navigator.userAgent) ? (
+                    <option value="qdx" disabled className="text-gray-400">QDX (Unsupported on Android)</option>
+                  ) : (
+                    <option value="qdx">QDX</option>
+                  )}
                   <option value="icom">Icom (CI-V)</option>
                 </select>
               </div>
