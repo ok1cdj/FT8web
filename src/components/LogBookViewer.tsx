@@ -34,6 +34,7 @@ export function LogBookViewer({
             if (success) {
                 await logBook.updateQSO({ ...qso, synced: true });
                 await fetchQsos();
+                window.dispatchEvent(new Event('qso-logged'));
                 console.log(`[Wavelog Sync] Manual single sync of QSO ID ${qso.id} succeeded.`);
             } else {
                 console.error(`[Wavelog Sync] Manual single sync of QSO ID ${qso.id} failed. Feel free to inspect the console logs above.`);
@@ -54,6 +55,7 @@ export function LogBookViewer({
             await logBook.clearLogBook();
             setConfirmDeleteAll(false);
             await fetchQsos();
+            window.dispatchEvent(new Event('qso-logged'));
         } catch (err) {
             console.error('Failed to wipe logbook', err);
         }
@@ -83,7 +85,8 @@ export function LogBookViewer({
     const handleDelete = async (id: number) => {
         await logBook.deleteQSO(id);
         setDeletingId(null);
-        fetchQsos();
+        await fetchQsos();
+        window.dispatchEvent(new Event('qso-logged'));
     };
 
     const handleExport = async () => {
@@ -94,6 +97,7 @@ export function LogBookViewer({
         setIsSyncing(true);
         await CloudLogService.syncOfflineQueue({ wavelogEnabled, wavelogUrl, wavelogApiKey, wavelogStationProfileId });
         await fetchQsos();
+        window.dispatchEvent(new Event('qso-logged'));
         setIsSyncing(false);
     };
 

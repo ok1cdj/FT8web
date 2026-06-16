@@ -10,6 +10,7 @@ import { LogBookViewer } from './components/LogBookViewer';
 import { VersionInfo } from './components/VersionInfo';
 import { logBook, QSO } from './LogBook';
 import { CloudLogService } from './services/CloudLogService';
+import { LogbookService } from './services/LogbookService';
 
 export interface FT8DecodedMessage {
   time: string;
@@ -120,8 +121,48 @@ export default function App() {
       return (localStorage.getItem('ft8_finalMessageMode') as 'RR73'|'RRR') || 'RR73';
   });
 
-  const [catMode, setCatMode] = useState<'manual'|'kenwood'|'qdx'|'icom'>(() => {
-    return (localStorage.getItem('ft8_catMode') as 'manual'|'kenwood'|'qdx'|'icom') || 'manual';
+  // Keep a Set of callsigns worked before on the current band & mode
+  const [workedCallsigns, setWorkedCallsigns] = useState<Set<string>>(new Set());
+
+  // Helper to determine band from VFO frequency
+  const getBandFromFreq = useCallback((freqInHz: number): string => {
+      const mhz = freqInHz / 1e6;
+      if (mhz >= 1.8 && mhz <= 2.0) return "160m";
+      if (mhz >= 3.5 && mhz <= 4.0) return "80m";
+      if (mhz >= 5.3 && mhz <= 5.4) return "60m";
+      if (mhz >= 7.0 && mhz <= 7.3) return "40m";
+      if (mhz >= 10.1 && mhz <= 10.2) return "30m";
+      if (mhz >= 14.0 && mhz <= 14.35) return "20m";
+      if (mhz >= 18.068 && mhz <= 18.168) return "17m";
+      if (mhz >= 21.0 && mhz <= 21.45) return "15m";
+      if (mhz >= 24.89 && mhz <= 24.99) return "12m";
+      if (mhz >= 28.0 && mhz <= 29.7) return "10m";
+      if (mhz >= 50.0 && mhz <= 54.0) return "6m";
+      return "";
+  }, []);
+
+  const loadWorkedCallsigns = useCallback(async () => {
+    const currentBand = getBandFromFreq(vfoFreq);
+    const set = await LogbookService.getWorkedCallsigns(currentBand, "FT8");
+    setWorkedCallsigns(set);
+  }, [vfoFreq, getBandFromFreq]);
+
+  useEffect(() => {
+    loadWorkedCallsigns();
+  }, [loadWorkedCallsigns]);
+
+  useEffect(() => {
+    const handleQsoChange = () => {
+      loadWorkedCallsigns();
+    };
+    window.addEventListener('qso-logged', handleQsoChange);
+    return () => {
+      window.removeEventListener('qso-logged', handleQsoChange);
+    };
+  }, [loadWorkedCallsigns]);
+
+  const [catMode, setCatMode] = useState<'manual'|'kenwood'|'yaesu'|'qdx'|'icom'>(() => {
+    return (localStorage.getItem('ft8_catMode') as 'manual'|'kenwood'|'yaesu'|'qdx'|'icom') || 'manual';
   });
   const [catBaudRate, setCatBaudRate] = useState<number>(() => {
     const saved = localStorage.getItem('ft8_catBaudRate');
@@ -342,7 +383,8 @@ export default function App() {
         { usbVendorId: 0x1A86, vendorId: 6790 }, // Qinheng CH34x
         { usbVendorId: 0x0403, vendorId: 1027 }, // FTDI
         { usbVendorId: 0x067B, vendorId: 1659 },  // Prolific PL2303
-        { usbVendorId: 0x0C26, vendorId: 3110 }  // Icom Inc. IC-7300 MKII
+        { usbVendorId: 0x0C26, vendorId: 3110 },  // Icom Inc. IC-7300 MKII
+        { usbVendorId: 0x0483, vendorId: 1155 }  // STMicroelectronics (QDX) 
       ];
 
       const port = await UniversalSerialPort.requestPort({ filters: serialFilters });
@@ -1082,6 +1124,9 @@ export default function App() {
             const id = await logBook.logQSO(qsoRecord);
             qsoRecord.id = id;
 
+            // Dispatch global event to trigger worked calls Set updates instantly
+            window.dispatchEvent(new Event('qso-logged'));
+
             // Trigger global refresh for UI immediately so it appears on screen without delay
             if (typeof (window as any).refreshQsoLogbookUi === 'function') {
                 (window as any).refreshQsoLogbookUi();
@@ -1098,6 +1143,8 @@ export default function App() {
                      });
                      if (success) {
                          await logBook.updateQSO({ ...qsoRecord, synced: true });
+                         
+                         window.dispatchEvent(new Event('qso-logged'));
                          
                          // Refresh UI again to update the synced cloud status icon on screen
                          if (typeof (window as any).refreshQsoLogbookUi === 'function') {
@@ -1381,48 +1428,67 @@ export default function App() {
                         Awaiting FT8 signals...<br/>(Audio decoded every 15s synced period)
                     </div>
                 )}
-                {rxLog.map((log, i) => (
-                  log.isDivider ? (
-                    <div key={i} className="flex items-center justify-center py-2 opacity-50">
-                       <span className="text-[9px] font-mono tracking-widest text-text-muted">{log.message}</span>
-                    </div>
-                  ) : (
-                  <div 
-                    key={i}
-                    onClick={() => {
-                      const callsign = extractTransmitterCallsign(log.message);
-                      if (callsign) {
-                        setTargetCall(callsign);
-                        if (fsmRef.current) {
-                          const isSameStation = fsmRef.current.targetCall === callsign;
-                          fsmRef.current.targetCall = callsign;
-                          const gridMatch = log.message.match(/\b[A-Z]{2}[0-9]{2}\b/);
-                          if (gridMatch && gridMatch[0] !== 'RR73') {
-                            fsmRef.current.targetGrid = gridMatch[0];
-                          } else if (!isSameStation) {
-                            fsmRef.current.targetGrid = null;
-                          }
-                          if (autoSequence) {
-                            fsmRef.current.updateState('REPLY_SENDING', callsign);
-                            setTxEnabled(true);
+                {rxLog.map((log, i) => {
+                  if (log.isDivider) {
+                    return (
+                      <div key={i} className="flex items-center justify-center py-2 opacity-50">
+                         <span className="text-[9px] font-mono tracking-widest text-text-muted">{log.message}</span>
+                      </div>
+                    );
+                  }
+
+                  const callsign = extractTransmitterCallsign(log.message);
+                  const isWorked = callsign ? workedCallsigns.has(callsign.toUpperCase()) : false;
+
+                  return (
+                    <div 
+                      key={i}
+                      onClick={() => {
+                        const call = extractTransmitterCallsign(log.message);
+                        if (call) {
+                          setTargetCall(call);
+                          if (fsmRef.current) {
+                            const isSameStation = fsmRef.current.targetCall === call;
+                            fsmRef.current.targetCall = call;
+                            const gridMatch = log.message.match(/\b[A-Z]{2}[0-9]{2}\b/);
+                            if (gridMatch && gridMatch[0] !== 'RR73') {
+                              fsmRef.current.targetGrid = gridMatch[0];
+                            } else if (!isSameStation) {
+                              fsmRef.current.targetGrid = null;
+                            }
+                            if (autoSequence) {
+                              fsmRef.current.updateState('REPLY_SENDING', call);
+                              setTxEnabled(true);
+                            }
                           }
                         }
-                      }
-                      
-                      // Auto-set TX period to the OPPOSITE of the caller's period
-                      const seconds = parseInt(log.time.substring(4, 6), 10);
-                      const callerPeriod = Math.floor(seconds / 15) % 2; // 0 for even, 1 for odd
-                      setTxPeriod(callerPeriod === 0 ? 1 : 0);
-                    }}
-                    className="grid grid-cols-[55px_40px_60px_1fr] gap-2 hover:bg-btn cursor-pointer p-1 rounded transition-colors group text-[11px] items-center"
-                  >
-                    <span className="text-zinc-500">{log.time}</span>
-                    <span className={log.snr > -10 ? 'text-green-400' : 'text-red-400'}>{log.snr}</span>
-                    <span className="text-blue-400">{log.freq}Hz</span>
-                    <span className="text-text-main group-hover:text-text-highlight font-bold">{log.message}</span>
-                  </div>
-                  )
-                ))}
+                        
+                        // Auto-set TX period to the OPPOSITE of the caller's period
+                        const seconds = parseInt(log.time.substring(4, 6), 10);
+                        const callerPeriod = Math.floor(seconds / 15) % 2; // 0 for even, 1 for odd
+                        setTxPeriod(callerPeriod === 0 ? 1 : 0);
+                      }}
+                      className={`grid grid-cols-[55px_40px_60px_1fr] gap-2 hover:bg-btn cursor-pointer p-1 rounded transition-colors group text-[11px] items-center ${
+                        isWorked ? 'opacity-55 hover:opacity-100' : ''
+                      }`}
+                    >
+                      <span className="text-zinc-500">{log.time}</span>
+                      <span className={log.snr > -10 ? 'text-green-400' : 'text-red-400'}>{log.snr}</span>
+                      <span className="text-blue-400">{log.freq}Hz</span>
+                      <span className="text-text-main group-hover:text-text-highlight font-bold flex items-center flex-wrap">
+                        {log.message}
+                        {isWorked && (
+                          <span 
+                            className="ml-1.5 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono font-bold uppercase bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400 border border-neutral-300 dark:border-neutral-700/60 leading-none select-none" 
+                            title="Worked before on this band and mode (B4)"
+                          >
+                            B4
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -1755,12 +1821,13 @@ export default function App() {
                 <label className="text-[10px] uppercase tracking-widest text-text-muted">Protocol Mode</label>
                 <select 
                   value={catMode}
-                  onChange={e => setCatMode(e.target.value as 'manual' | 'kenwood' | 'qdx' | 'icom')}
+                  onChange={e => setCatMode(e.target.value as 'manual' | 'kenwood' | 'yaesu' | 'qdx' | 'icom')}
                   className="bg-app border border-border-input text-text-main rounded px-3 py-2 text-xs font-mono w-full focus:outline-none focus:border-[#4caf50]"
                 >
                   <option value="manual">Manual (No CAT / iOS)</option>
                   <option value="kenwood">Kenwood</option>
-                  <option value="qdx">QDX (Kenwood compatible)</option>
+                  <option value="yaesu">Yaesu (FT-710, FTDX10, FT-991A, FT-891)</option>
+                  <option value="qdx">QDX</option>
                   <option value="icom">Icom (CI-V)</option>
                 </select>
               </div>

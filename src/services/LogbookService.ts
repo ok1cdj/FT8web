@@ -1,0 +1,32 @@
+import { logBook } from '../LogBook';
+
+export class LogbookService {
+  /**
+   * Retrieves a Set of all callsigns already worked/logged for the given band and mode.
+   * Callsigns are normalized to uppercase for consistent instant checking.
+   */
+  static async getWorkedCallsigns(band: string, mode: string): Promise<Set<string>> {
+    const workedSet = new Set<string>();
+    try {
+      const qsos = await logBook.getAllQSOs();
+      const targetBand = band.trim().toUpperCase();
+      const targetMode = mode.trim().toUpperCase();
+
+      for (const qso of qsos) {
+        // Mode could be 'FT8' or submode could be related. Standard check.
+        const qsoBand = (qso.band || '').trim().toUpperCase();
+        const qsoMode = (qso.mode || '').trim().toUpperCase();
+
+        if (qsoBand === targetBand && qsoMode === targetMode) {
+          const call = (qso.call || '').trim().toUpperCase();
+          if (call) {
+            workedSet.add(call);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[LogbookService] Failed to retrieve worked callsigns:', error);
+    }
+    return workedSet;
+  }
+}

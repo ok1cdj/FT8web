@@ -262,6 +262,209 @@ class KenwoodDriver {
 }
 
 // ---------------------------------------------------------
+// Variant B.2: Yaesu (ASCII Protocol)
+// ---------------------------------------------------------
+class YaesuDriver {
+  constructor(baudRate = 38400) {
+    this.baudRate = baudRate;
+    this.port = null;
+    this.reader = null;
+    this.writer = null;
+    this.buffer = "";
+    this.pendingFreqResolvers = [];
+    this.encoder = new TextEncoder();
+    this.decoder = new TextDecoder();
+    this.isActive = false;
+    this.rxFrequency = 14074000; // Baseline frequency default
+    this.vfoOffset = 0; // Current active offset
+  }
+
+  async connect(port) {
+    if (!port) {
+      throw new Error("No serial port provided for Yaesu connection");
+    }
+    this.port = port;
+    if (!this.port.readable) {
+        try {
+            await this.port.open({ baudRate: this.baudRate });
+        } catch (e) {
+            console.error("Yaesu Port open error: ", e);
+            throw new Error(`Failed to open Yaesu CAT port (${e.message || e})`);
+        }
+    }
+    
+    if (!this.port.readable || !this.port.writable) {
+        throw new Error("Yaesu serial port opened but readable/writable streams are unavailable. Ensure another app is not using this port.");
+    }
+    
+    try {
+        if (this.port && typeof this.port.setSignals === 'function') {
+            await this.port.setSignals({ dataTerminalReady: true, requestToSend: true });
+            console.log("[CatManager] DTR & RTS driven HIGH on connect for Yaesu");
+        }
+    } catch (sigErr) {
+        console.warn("[CatManager] Failed to set signals on connect:", sigErr);
+    }
+    
+    this.reader = this.port.readable.getReader();
+    this.writer = this.port.writable.getWriter();
+    this.isActive = true;
+    
+    // Start continuous read loop
+    this.readLoop();
+  }
+
+  async readLoop() {
+    try {
+      while (this.isActive) {
+        const { value, done } = await this.reader.read();
+        if (done || !this.isActive) break;
+        if (value) {
+          const text = this.decoder.decode(value);
+          this.buffer += text;
+          let semiIndex;
+          // Commands are semicolon terminated
+          while ((semiIndex = this.buffer.indexOf(';')) !== -1) {
+            const msg = this.buffer.substring(0, semiIndex + 1); // include ';'
+            this.buffer = this.buffer.substring(semiIndex + 1);
+            this.handleMessage(msg);
+          }
+        }
+      }
+    } catch (e) {
+      if (this.isActive) {
+        console.error("Yaesu Read Loop Error:", e);
+      }
+    }
+  }
+
+  handleMessage(msg) {
+    // e.g., FA014074000;
+    if (msg.startsWith("FA") && msg.length >= 11) {
+      const freqStr = msg.substring(2, 11);
+      const freq = parseInt(freqStr, 10);
+      if (!this.vfoOffset || this.vfoOffset === 0) {
+        this.rxFrequency = freq;
+      }
+      if (this.pendingFreqResolvers.length > 0) {
+        const resolve = this.pendingFreqResolvers.shift();
+        resolve(freq);
+      }
+    }
+  }
+
+  async setFrequency(freqHz) {
+    this.rxFrequency = freqHz; // Store the baseline RX frequency
+    if (!this.writer) return;
+    // FA needs 9 digits padded with leading zeros
+    const freqStr = freqHz.toString().padStart(9, '0');
+    await this.writer.write(this.encoder.encode(`FA${freqStr};`));
+  }
+
+  async setTx(isTxActive, userAudioFreq = 1500) {
+    if (!this.writer) return isTxActive ? userAudioFreq : null;
+    
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+    if (isTxActive) {
+      // 1. Calculate vfoOffset and txAudioFreq
+      const vfoOffset = Math.round((userAudioFreq - 1500) / 500) * 500;
+      const txAudioFreq = userAudioFreq - vfoOffset;
+      const txVfoFreq = this.rxFrequency + vfoOffset;
+
+      // 2. Store offset state
+      this.vfoOffset = vfoOffset;
+
+      // 3. Command radio to retune VFO if offset is not 0
+      if (this.vfoOffset !== 0) {
+        const freqStr = txVfoFreq.toString().padStart(9, '0');
+        await this.writer.write(this.encoder.encode(`FA${freqStr};`));
+      }
+
+      // 4. Minor hardware settling delay
+      await sleep(50);
+
+      // 5. Send PTT command to start transmitting (TX1;)
+      await this.writer.write(this.encoder.encode('TX1;'));
+
+      // 6. Return recalculated audio frequency
+      return txAudioFreq;
+    } else {
+      // 1. Immediately stop transmitting (TX0;)
+      await this.writer.write(this.encoder.encode('TX0;'));
+
+      // 2. If vfoOffset was not 0, delay and retune back
+      if (this.vfoOffset !== 0) {
+        await sleep(50);
+        const freqStr = this.rxFrequency.toString().padStart(9, '0');
+        await this.writer.write(this.encoder.encode(`FA${freqStr};`));
+      }
+
+      // 3. Reset offset state
+      this.vfoOffset = 0;
+
+      return null;
+    }
+  }
+
+  async getFrequency() {
+    if (!this.writer) {
+      return Promise.reject(new Error("Yaesu port is not connected"));
+    }
+    return new Promise(async (resolve, reject) => {
+      this.pendingFreqResolvers.push(resolve);
+      try {
+        await this.writer.write(this.encoder.encode('FA;'));
+      } catch (writeErr) {
+        const idx = this.pendingFreqResolvers.indexOf(resolve);
+        if (idx > -1) this.pendingFreqResolvers.splice(idx, 1);
+        reject(writeErr);
+        return;
+      }
+      // Time-out if radio disconnected or unresponsive
+      setTimeout(() => {
+        const idx = this.pendingFreqResolvers.indexOf(resolve);
+        if (idx > -1) {
+          this.pendingFreqResolvers.splice(idx, 1);
+          reject(new Error("Timeout reading Yaesu frequency"));
+        }
+      }, 1500);
+    });
+  }
+
+  async disconnect() {
+    this.isActive = false;
+    if (!this.port) return;
+    try {
+      if (this.reader) {
+        await this.reader.cancel().catch(() => {});
+        this.reader.releaseLock();
+      }
+    } catch (e) {
+      console.warn("Yaesu release lock error (reader):", e);
+    }
+    try {
+      if (this.writer) {
+        this.writer.releaseLock();
+      }
+    } catch (e) {
+      console.warn("Yaesu release lock error (writer):", e);
+    }
+    try {
+      if (this.port.readable || this.port.writable) {
+        await this.port.close().catch(() => {});
+      }
+    } catch (e) {
+      console.warn("Yaesu port close error:", e);
+    }
+    this.port = null;
+    this.reader = null;
+    this.writer = null;
+    this.buffer = "";
+  }
+}
+
+// ---------------------------------------------------------
 // Variant C: Icom (CI-V Binary Protocol)
 // ---------------------------------------------------------
 class IcomDriver {
@@ -716,6 +919,9 @@ export default class CatManager {
     switch (this.mode.toLowerCase()) {
       case 'kenwood':
         this.driver = new KenwoodDriver(baudRate || 38400);
+        break;
+      case 'yaesu':
+        this.driver = new YaesuDriver(baudRate || 38400);
         break;
       case 'qdx':
         this.driver = new QDXDriver(baudRate || 57600);

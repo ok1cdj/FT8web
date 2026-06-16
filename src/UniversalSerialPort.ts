@@ -134,6 +134,31 @@ class AndroidWebUsbPortWrapper implements UniversalSerialPortInstance {
       lineData[6] = 8; // 8 bits
       await this.device.controlTransferOut({ requestType: 'class', recipient: 'interface', request: 0x20, value: 0, index: this.interfaceNumber }, lineData);
     }
+    else if (vid === 0x0483) {
+  // QDX (STM32 CDC ACM)
+  const baudData = new Uint8Array(7);
+  new DataView(baudData.buffer).setUint32(0, baudRate, true); // Baud rate
+  baudData[4] = 0; // Stop bits: 1
+  baudData[5] = 0; // Parity: None
+  baudData[6] = 8; // Data bits: 8
+  
+  await this.device.controlTransferOut({
+    requestType: 'class',
+    recipient: 'interface',
+    request: 0x20, // SET_LINE_CODING
+    value: 0,
+    index: this.interfaceNumber
+  }, baudData);
+
+  // Set control line state (DTR/RTS) - nutné pro aktivaci portu
+  await this.device.controlTransferOut({
+    requestType: 'class',
+    recipient: 'interface',
+    request: 0x22, // SET_CONTROL_LINE_STATE
+    value: 0x03,   // DTR + RTS ON
+    index: this.interfaceNumber
+  });
+  }
   }
   
   private setupStreams() {
@@ -215,8 +240,22 @@ class AndroidWebUsbPortWrapper implements UniversalSerialPortInstance {
       if (rts) value |= 0x02;
       await this.device.controlTransferOut({ requestType: 'vendor', recipient: 'device', request: 0x22, value, index: this.interfaceNumber });
     }
+    else if (vid === 0x0483) {
+    // QDX (STM32 CDC)
+     let value = 0;
+     if (dtr) value |= 0x01;
+     if (rts) value |= 0x02;
+     await this.device.controlTransferOut({ 
+    requestType: 'class', 
+    recipient: 'interface', 
+    request: 0x22, 
+    value, 
+    index: this.interfaceNumber 
+  });
   }
 }
+}
+
 
 export class UniversalSerialPort {
   static async requestPort(options: { filters: any[] }): Promise<UniversalSerialPortInstance> {
