@@ -84,8 +84,12 @@ Log your FT8 QSOs automatically with **Wavelog** or **Cloudlog**:
 - [ ] Built-in better logbook
 
 ### Tested Radios
-- **IC-7300** (Success)
-- **IC-705** (Success)
+
+| Radio | PC | Android |
+| :--- | :--- | :--- |
+| **IC-705** | Working | Untested |
+| **IC-7300** | Working | Working |
+| **Yaesu FTX-1** | Working | Untested |
 
 ### Hardware Testing Feedback
 We have implemented and support serial CAT and PTT protocols for **Kenwood**, **Yaesu** (e.g., FT-710, FTDX10, FT-991A, FT-891), and **QDX** transceivers, but these configurations are currently **untested in real-world environments**.
