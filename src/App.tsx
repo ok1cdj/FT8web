@@ -67,27 +67,30 @@ export interface ClockVerdict {
   message: string;
 }
 
-// Default public source (CORS-enabled). For tighter, dependency-free results,
-// swap for a same-origin "/api/time" endpoint returning { now: <epoch_ms> }.
-const TIME_SOURCE_URL = 'https://worldtimeapi.org/api/timezone/Etc/UTC';
-
-async function sampleClockOffset(url: string): Promise<{ offsetMs: number; uncertaintyMs: number }> {
+// Time source: the app's OWN origin. We read the server's `Date` response
+// header — no CORS, no third-party dependency, and the service worker passes
+// same-origin requests fine. Resolution is 1 second, which is exactly right for
+// an advisory "is the clock badly wrong?" check.
+async function sampleClockOffset(): Promise<{ offsetMs: number; uncertaintyMs: number }> {
   const tx = Date.now();
-  const res = await fetch(url, { cache: 'no-store' });
+  // Cache-buster + no-store → forces a fresh network response whose `Date`
+  // header is the server's current UTC time (not a cached value).
+  const res = await fetch(`/?_t=${tx}`, { method: 'GET', cache: 'no-store' });
   const rx = Date.now();
-  const body = await res.json();
-  // worldtimeapi: utc_datetime carries fractional seconds; unixtime is integer-only.
-  const serverMs = body.now ?? Date.parse(body.utc_datetime ?? body.dateTime);
-  if (!Number.isFinite(serverMs)) throw new Error('bad time response');
-  const rtt = rx - tx;                              // SNTP correction
-  return { offsetMs: serverMs - (tx + rtt / 2), uncertaintyMs: rtt / 2 };
+  const dateHeader = res.headers.get('date');
+  if (!dateHeader) throw new Error('no Date header');
+  const serverMs = Date.parse(dateHeader);           // truncated to whole second
+  if (!Number.isFinite(serverMs)) throw new Error('bad Date header');
+  const rtt = rx - tx;
+  // +500ms: the header floors to the second, so the true instant is ~mid-second.
+  return { offsetMs: serverMs + 500 - (tx + rtt / 2), uncertaintyMs: rtt / 2 + 500 };
 }
 
-async function checkClock(url: string = TIME_SOURCE_URL): Promise<ClockVerdict> {
+async function checkClock(): Promise<ClockVerdict> {
   let best: { offsetMs: number; uncertaintyMs: number } | null = null;
   try {
     for (let i = 0; i < 5; i++) {
-      const s = await sampleClockOffset(url);          // keep the lowest-jitter sample
+      const s = await sampleClockOffset();             // keep the lowest-jitter sample
       if (!best || s.uncertaintyMs < best.uncertaintyMs) best = s;
     }
   } catch {
@@ -99,11 +102,12 @@ async function checkClock(url: string = TIME_SOURCE_URL): Promise<ClockVerdict> 
   const sign = best.offsetMs >= 0 ? '+' : '\u2212';
   const offsetStr = `${sign}${(drift / 1000).toFixed(2)}s`;
 
-  // Guard: if drift is within measurement noise, treat as OK (no false warnings).
-  if (drift <= Math.max(best.uncertaintyMs, 50) || drift < 500) {
+  // Thresholds match a ~1s-resolution source and FT8 tolerance: <1s fine,
+  // 1-2s decoding degrades, >2s won't decode. Guard avoids false warnings.
+  if (drift <= Math.max(best.uncertaintyMs, 50) || drift < 1000) {
     return { status: 'ok', offsetMs: best.offsetMs, message: `Clock OK (${offsetStr})` };
   }
-  if (drift < 1000) {
+  if (drift < 2000) {
     return { status: 'warn', offsetMs: best.offsetMs, message: `Off ${offsetStr} \u2014 watch it` };
   }
   return { status: 'bad', offsetMs: best.offsetMs, message: `Off ${offsetStr} \u2014 fix device clock` };
