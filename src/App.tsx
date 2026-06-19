@@ -54,6 +54,61 @@ function extractTransmitterCallsign(message: string): string | null {
   return parts[0] || null;
 }
 
+// --- Advisory clock-accuracy check (SNTP-style over HTTP) -------------------
+// FT8 is time-critical. Browsers can't read the system NTP daemon or set the
+// clock, so we measure the device-clock offset against a trusted HTTP time
+// source and only DISPLAY a status. The fix for bad drift is to correct the
+// device clock, which is what every timing path in this app already relies on.
+export type ClockStatus = 'ok' | 'warn' | 'bad' | 'unknown';
+
+export interface ClockVerdict {
+  status: ClockStatus;
+  offsetMs: number;
+  message: string;
+}
+
+// Default public source (CORS-enabled). For tighter, dependency-free results,
+// swap for a same-origin "/api/time" endpoint returning { now: <epoch_ms> }.
+const TIME_SOURCE_URL = 'https://worldtimeapi.org/api/timezone/Etc/UTC';
+
+async function sampleClockOffset(url: string): Promise<{ offsetMs: number; uncertaintyMs: number }> {
+  const tx = Date.now();
+  const res = await fetch(url, { cache: 'no-store' });
+  const rx = Date.now();
+  const body = await res.json();
+  // worldtimeapi: utc_datetime carries fractional seconds; unixtime is integer-only.
+  const serverMs = body.now ?? Date.parse(body.utc_datetime ?? body.dateTime);
+  if (!Number.isFinite(serverMs)) throw new Error('bad time response');
+  const rtt = rx - tx;                              // SNTP correction
+  return { offsetMs: serverMs - (tx + rtt / 2), uncertaintyMs: rtt / 2 };
+}
+
+async function checkClock(url: string = TIME_SOURCE_URL): Promise<ClockVerdict> {
+  let best: { offsetMs: number; uncertaintyMs: number } | null = null;
+  try {
+    for (let i = 0; i < 5; i++) {
+      const s = await sampleClockOffset(url);          // keep the lowest-jitter sample
+      if (!best || s.uncertaintyMs < best.uncertaintyMs) best = s;
+    }
+  } catch {
+    return { status: 'unknown', offsetMs: 0, message: 'Time check unavailable' };
+  }
+  if (!best) return { status: 'unknown', offsetMs: 0, message: 'Time check unavailable' };
+
+  const drift = Math.abs(best.offsetMs);
+  const sign = best.offsetMs >= 0 ? '+' : '\u2212';
+  const offsetStr = `${sign}${(drift / 1000).toFixed(2)}s`;
+
+  // Guard: if drift is within measurement noise, treat as OK (no false warnings).
+  if (drift <= Math.max(best.uncertaintyMs, 50) || drift < 500) {
+    return { status: 'ok', offsetMs: best.offsetMs, message: `Clock OK (${offsetStr})` };
+  }
+  if (drift < 1000) {
+    return { status: 'warn', offsetMs: best.offsetMs, message: `Off ${offsetStr} \u2014 watch it` };
+  }
+  return { status: 'bad', offsetMs: best.offsetMs, message: `Off ${offsetStr} \u2014 fix device clock` };
+}
+
 export default function App() {
   const BAND_FREQS = [
     { label: '80m', mhz: '3.5', hz: 3573000 },
@@ -93,6 +148,7 @@ export default function App() {
   const [audioLevel, setAudioLevel] = useState(0);
   const [utcTime, setUtcTime] = useState('00:00:00');
   const [windowProgress, setWindowProgress] = useState(0);
+  const [clockVerdict, setClockVerdict] = useState<ClockVerdict>({ status: 'unknown', offsetMs: 0, message: 'Checking\u2026' });
   
   // Device Selection State
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
@@ -104,6 +160,37 @@ export default function App() {
     localStorage.setItem('ft8_audioInputId', selectedDeviceId);
     localStorage.setItem('ft8_audioOutputId', selectedOutputDeviceId);
   }, [selectedDeviceId, selectedOutputDeviceId]);
+
+  // Advisory clock-accuracy check: measures device-clock drift vs a trusted
+  // network source and updates the status light. Never sets the system clock.
+  useEffect(() => {
+    let alive = true;
+    const run = () => { checkClock().then(v => { if (alive) setClockVerdict(v); }); };
+
+    run();                                            // on mount
+    const hourly = setInterval(run, 60 * 60 * 1000);  // hourly backstop
+
+    const onVisible = () => { if (document.visibilityState === 'visible') run(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', run);           // network restored
+
+    // Wake-from-sleep watchdog: a >35s gap between 30s ticks means the device
+    // suspended; uses only the delta, so it works even if the clock is wrong.
+    let last = Date.now();
+    const wake = setInterval(() => {
+      const now = Date.now();
+      if (now - last > 35000) run();
+      last = now;
+    }, 30000);
+
+    return () => {
+      alive = false;
+      clearInterval(hourly);
+      clearInterval(wake);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', run);
+    };
+  }, []);
   
   // Station Configuration State
   const [myCall, setMyCall] = useState<string>(() => localStorage.getItem('ft8_myCall') || 'N0TMP');
@@ -1355,6 +1442,23 @@ export default function App() {
           <span className="text-2xl font-mono font-bold text-text-main leading-none">
             {utcTime}
           </span>
+          <div className="flex items-center gap-1.5 mt-1.5" title={clockVerdict.message}>
+            <span
+              className={`h-2 w-2 rounded-full transition-colors duration-500 ${
+                clockVerdict.status === 'ok'   ? 'bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.7)]' :
+                clockVerdict.status === 'warn' ? 'bg-yellow-400 shadow-[0_0_6px_rgba(250,204,21,0.7)] animate-pulse' :
+                clockVerdict.status === 'bad'  ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)] animate-pulse' :
+                                                 'bg-gray-500'
+              }`}
+            />
+            <span className={`text-[10px] font-mono tracking-wide ${
+              clockVerdict.status === 'bad'  ? 'text-red-400' :
+              clockVerdict.status === 'warn' ? 'text-yellow-400' :
+              'text-text-muted'
+            }`}>
+              {clockVerdict.message}
+            </span>
+          </div>
         </div>
       </header>
 
