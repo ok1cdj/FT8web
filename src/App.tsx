@@ -64,7 +64,10 @@ export default function App() {
     { label: '15m', mhz: '21.0', hz: 21074000 },
     { label: '12m', mhz: '24.9', hz: 24915000 },
     { label: '10m', mhz: '28.0', hz: 28074000 },
-    { label: '6m', mhz: '50.3', hz: 50313000 }
+    { label: '6m', mhz: '50.3', hz: 50313000 },
+    { label: '2m', mhz: '144.1', hz: 144174000 },
+    { label: '70cm', mhz: '432.1', hz: 432174000 },
+    { label: '23cm', mhz: '1296.1', hz: 1296174000 }
   ];
 
   const [vfoFreq, setVfoFreq] = useState<number>(() => {
@@ -1870,6 +1873,9 @@ export default function App() {
                     className="bg-app border border-border-input rounded px-3 py-2 text-sm font-mono w-full focus:outline-none focus:border-[#4caf50] text-text-main uppercase" 
                     placeholder="94"
                   />
+                  <span className="text-[10px] text-text-muted font-mono leading-tight mt-0.5">
+                    Common addresses: IC-7300: 94 • IC-705: A4 • IC-7100: 88 • IC-9700: A2 • IC-7610: 98 • IC-7000: 70
+                  </span>
                 </div>
               )}
 

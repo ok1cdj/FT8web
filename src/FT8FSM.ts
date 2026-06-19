@@ -249,14 +249,23 @@ export default class FT8FSM {
 
                         const upperContent = msgContent.toUpperCase();
 
-                        // 1. Check if they sent a final closure (73, RR73, RRR)
-                        if (upperContent.includes('RR73') || upperContent.includes('73') || upperContent.includes('RRR')) {
-                            if (upperContent.includes('RR73')) {
-                                // "after we get RR73 we need send 73 for one period."
+                        // 1. Check if they sent a final closure (73, RR73, RRR).
+                        // Match whole tokens, NOT substrings: a grid locator whose
+                        // digits are 73 (e.g. FN73, EM73, DM73) contains the substring
+                        // "73" and would otherwise be mistaken for an end-of-QSO "73".
+                        // \b73\b does not match inside "FN73" or "RR73" (no boundary
+                        // between two word chars), so each closure is detected cleanly.
+                        const hasRR73 = /\bRR73\b/.test(upperContent);
+                        const hasRRR = /\bRRR\b/.test(upperContent);
+                        const has73 = /\b73\b/.test(upperContent);
+
+                        if (hasRR73 || hasRRR || has73) {
+                            if (hasRR73 || hasRRR) {
+                                // We received RR73 or RRR -> reply with 73 for one period.
                                 this.currentState = 'SENDING_73';
                                 this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
-                            } else if (upperContent.includes('73')) {
-                                // Plain 73 (not RR73) - "we got OK1CDJ IU1DXU 73 we need stop after 73 and no continue sending RR73"
+                            } else {
+                                // Plain 73 -> QSO is finished, stop here (do not send RR73).
                                 this.onAppendQsoLog(`[QSO COMPLETE w/ ${this.targetCall}]`, false, true);
                                 if (this.targetCall) {
                                     this.onLogQSO({
@@ -267,9 +276,6 @@ export default class FT8FSM {
                                     });
                                 }
                                 this.resetToIdle();
-                            } else if (upperContent.includes('RRR')) {
-                                this.currentState = 'SENDING_73';
-                                this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
                             }
                         }
                         // 2. Check if they sent a signal report (e.g. -12, +04, R-12, R+04)
