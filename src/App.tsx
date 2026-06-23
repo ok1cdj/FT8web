@@ -255,8 +255,8 @@ export default function App() {
     };
   }, [loadWorkedCallsigns]);
 
-  const [catMode, setCatMode] = useState<'manual'|'kenwood'|'yaesu'|'elecraft'|'qdx'|'icom'>(() => {
-    const saved = localStorage.getItem('ft8_catMode') as 'manual'|'kenwood'|'yaesu'|'elecraft'|'qdx'|'icom';
+  const [catMode, setCatMode] = useState<'manual'|'kenwood'|'yaesu'|'old-yaesu'|'elecraft'|'qdx'|'icom'>(() => {
+    const saved = localStorage.getItem('ft8_catMode') as 'manual'|'kenwood'|'yaesu'|'old-yaesu'|'elecraft'|'qdx'|'icom';
     const isAndroid = /Android/i.test(navigator.userAgent);
     if (isAndroid && saved === 'qdx') {
       return 'manual';
@@ -1937,12 +1937,13 @@ export default function App() {
                 <label className="text-[10px] uppercase tracking-widest text-text-muted">Protocol Mode</label>
                 <select 
                   value={catMode}
-                  onChange={e => setCatMode(e.target.value as 'manual' | 'kenwood' | 'yaesu' | 'elecraft' | 'qdx' | 'icom')}
+                  onChange={e => setCatMode(e.target.value as 'manual' | 'kenwood' | 'yaesu' | 'old-yaesu' | 'elecraft' | 'qdx' | 'icom')}
                   className="bg-app border border-border-input text-text-main rounded px-3 py-2 text-xs font-mono w-full focus:outline-none focus:border-[#4caf50]"
                 >
                   <option value="manual">Manual (No CAT / iOS)</option>
                   <option value="kenwood">Kenwood</option>
                   <option value="yaesu">Yaesu (FT-710, FTDX10, FT-991A, FT-891)</option>
+                  <option value="old-yaesu">Yaesu Old Binary (FT-817, FT-857, FT-897)</option>
                   <option value="elecraft">Elecraft (K3, KX3, KX2, etc.)</option>
                   {/Android/i.test(navigator.userAgent) ? (
                     <option value="qdx" disabled className="text-gray-400">QDX (Unsupported on Android)</option>

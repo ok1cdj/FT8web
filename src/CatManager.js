@@ -465,6 +465,174 @@ class YaesuDriver {
 }
 
 // ---------------------------------------------------------
+// Variant B.3: Old Yaesu (Binary Protocol, FT-817/857/897)
+// ---------------------------------------------------------
+// Commands are 5 bytes: [P1, P2, P3, P4, OPCODE]
+// Frequency is encoded as big-endian BCD in 10 Hz resolution.
+// Default baud rate is 4800 — too slow for fake-split VFO shifts,
+// so PTT-only CAT is used and audio stays at the user-selected offset.
+class OldYaesuDriver {
+  constructor(baudRate = 4800) {
+    this.baudRate = baudRate;
+    this.port = null;
+    this.reader = null;
+    this.writer = null;
+    this.rxBuffer = [];
+    this.pendingFreqResolvers = [];
+    this.isActive = false;
+    this.rxFrequency = 14074000;
+  }
+
+  async connect(port) {
+    if (!port) throw new Error("No serial port provided for Old Yaesu connection");
+    this.port = port;
+    if (!this.port.readable) {
+      try {
+        await this.port.open({ baudRate: this.baudRate });
+      } catch (e) {
+        throw new Error(`Failed to open Old Yaesu CAT port (${e.message || e})`);
+      }
+    }
+    if (!this.port.readable || !this.port.writable) {
+      throw new Error("Old Yaesu serial port opened but streams are unavailable.");
+    }
+    try {
+      if (typeof this.port.setSignals === 'function') {
+        await this.port.setSignals({ dataTerminalReady: false, requestToSend: false });
+      }
+    } catch (e) {
+      console.warn("[CatManager] Old Yaesu: failed to set signals:", e);
+    }
+    this.reader = this.port.readable.getReader();
+    this.writer = this.port.writable.getWriter();
+    this.isActive = true;
+    this.readLoop();
+  }
+
+  async readLoop() {
+    try {
+      while (this.isActive) {
+        const { value, done } = await this.reader.read();
+        if (done || !this.isActive) break;
+        if (value) {
+          for (let i = 0; i < value.length; i++) this.rxBuffer.push(value[i]);
+          this.processBuffer();
+        }
+      }
+    } catch (e) {
+      if (this.isActive) console.error("Old Yaesu Read Loop Error:", e);
+    }
+  }
+
+  processBuffer() {
+    if (this.pendingFreqResolvers.length > 0 && this.rxBuffer.length >= 5) {
+      // Bytes 0-3: big-endian BCD frequency (10 Hz resolution). Byte 4: mode (ignored).
+      const frame = this.rxBuffer.splice(0, 5);
+      const freq = this._bcdBytesToHz(frame);
+      if (freq > 0) this.rxFrequency = freq;
+      const resolve = this.pendingFreqResolvers.shift();
+      resolve(freq);
+    } else if (this.pendingFreqResolvers.length === 0) {
+      // Drain single-byte ACKs from PTT / set-frequency responses.
+      this.rxBuffer = [];
+    }
+  }
+
+  // 4 big-endian BCD bytes → Hz  (byte 4 is mode, ignored)
+  _bcdBytesToHz(bytes) {
+    let s = '';
+    for (let i = 0; i < 4; i++) {
+      s += ((bytes[i] >> 4) & 0x0F).toString();
+      s += (bytes[i] & 0x0F).toString();
+    }
+    return parseInt(s, 10) * 10;
+  }
+
+  // Hz → 4 big-endian BCD bytes (10 Hz resolution)
+  _hzToBcdBytes(freqHz) {
+    const s = Math.round(freqHz / 10).toString().padStart(8, '0');
+    // Treat each pair of decimal digits as a hex byte — this packs them as BCD.
+    return [
+      parseInt(s.substring(0, 2), 16),
+      parseInt(s.substring(2, 4), 16),
+      parseInt(s.substring(4, 6), 16),
+      parseInt(s.substring(6, 8), 16),
+    ];
+  }
+
+  async _sendCmd(p1, p2, p3, p4, opcode) {
+    if (!this.writer) return;
+    await this.writer.write(new Uint8Array([p1, p2, p3, p4, opcode]));
+  }
+
+  async getFrequency() {
+    if (!this.writer) return Promise.reject(new Error("Old Yaesu port is not connected"));
+    return new Promise(async (resolve, reject) => {
+      this.pendingFreqResolvers.push(resolve);
+      try {
+        await this._sendCmd(0x00, 0x00, 0x00, 0x00, 0x03); // READ_FREQ
+      } catch (e) {
+        const idx = this.pendingFreqResolvers.indexOf(resolve);
+        if (idx > -1) this.pendingFreqResolvers.splice(idx, 1);
+        reject(e);
+        return;
+      }
+      // 4800 baud needs a longer timeout than faster drivers
+      setTimeout(() => {
+        const idx = this.pendingFreqResolvers.indexOf(resolve);
+        if (idx > -1) {
+          this.pendingFreqResolvers.splice(idx, 1);
+          reject(new Error("Timeout reading Old Yaesu frequency"));
+        }
+      }, 3000);
+    });
+  }
+
+  async setFrequency(freqHz) {
+    this.rxFrequency = freqHz;
+    const [f1, f2, f3, f4] = this._hzToBcdBytes(freqHz);
+    await this._sendCmd(f1, f2, f3, f4, 0x01); // SET_FREQ
+  }
+
+  async setTx(isTxActive, userAudioFreq = 1500) {
+    if (isTxActive) {
+      await this._sendCmd(0x00, 0x00, 0x00, 0x00, 0x08); // PTT ON
+      return userAudioFreq;
+    } else {
+      await this._sendCmd(0x00, 0x00, 0x00, 0x00, 0x88); // PTT OFF
+      return null;
+    }
+  }
+
+  async disconnect() {
+    this.isActive = false;
+    if (!this.port) return;
+    try {
+      if (this.reader) {
+        await this.reader.cancel().catch(() => {});
+        this.reader.releaseLock();
+      }
+    } catch (e) {
+      console.warn("Old Yaesu release lock error (reader):", e);
+    }
+    try {
+      if (this.writer) this.writer.releaseLock();
+    } catch (e) {
+      console.warn("Old Yaesu release lock error (writer):", e);
+    }
+    try {
+      if (this.port.readable || this.port.writable) await this.port.close().catch(() => {});
+    } catch (e) {
+      console.warn("Old Yaesu port close error:", e);
+    }
+    this.port = null;
+    this.reader = null;
+    this.writer = null;
+    this.rxBuffer = [];
+  }
+}
+
+// ---------------------------------------------------------
 // Variant C: Icom (CI-V Binary Protocol)
 // ---------------------------------------------------------
 class IcomDriver {
@@ -1125,6 +1293,9 @@ export default class CatManager {
         break;
       case 'yaesu':
         this.driver = new YaesuDriver(baudRate || 38400);
+        break;
+      case 'old-yaesu':
+        this.driver = new OldYaesuDriver(baudRate || 4800);
         break;
       case 'elecraft':
         this.driver = new ElecraftDriver(baudRate || 38400);
