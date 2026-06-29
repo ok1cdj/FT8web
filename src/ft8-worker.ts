@@ -1,14 +1,15 @@
-import { decodeFT8, HashCallBook } from '@e04/ft8ts';
+import { decodeFT8, decodeFT4, HashCallBook } from '@e04/ft8ts';
 
 // Maintain state across decoding cycles (for non-standard callsign parts, etc.)
 const hashCallBook = new HashCallBook();
 
 self.onmessage = (e: MessageEvent) => {
-  const { audioData, sampleRate, nowString, decodeDepth = 2 } = e.data;
-  
+  const { audioData, sampleRate, nowString, decodeDepth = 2, mode = 'FT8' } = e.data;
+
   try {
     const startTime = performance.now();
-    const results = decodeFT8(audioData, { 
+    const decoder = mode === 'FT4' ? decodeFT4 : decodeFT8;
+    const results = decoder(audioData, {
        sampleRate,
        hashCallBook,
        depth: decodeDepth,

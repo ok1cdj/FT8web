@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Activity, Settings, X, HelpCircle } from 'lucide-react';
 import { getCaptureWorkletUrl } from './AudioWorkletBlob';
-import { encodeFT8 } from '@e04/ft8ts';
+import { encodeFT8, encodeFT4 } from '@e04/ft8ts';
 import CatManager from './CatManager.js';
 import { UniversalSerialPort } from './UniversalSerialPort';
 import FT8FSM, { QueuedCaller } from './FT8FSM';
@@ -114,7 +114,7 @@ async function checkClock(): Promise<ClockVerdict> {
 }
 
 export default function App() {
-  const BAND_FREQS = [
+  const BAND_FREQS_FT8 = [
     { label: '80m', mhz: '3.5', hz: 3573000 },
     { label: '40m', mhz: '7.0', hz: 7074000 },
     { label: '30m', mhz: '10.1', hz: 10136000 },
@@ -127,6 +127,16 @@ export default function App() {
     { label: '2m', mhz: '144.1', hz: 144174000 },
     { label: '70cm', mhz: '432.1', hz: 432174000 },
     { label: '23cm', mhz: '1296.1', hz: 1296174000 }
+  ];
+
+  const BAND_FREQS_FT4 = [
+    { label: '80m', mhz: '3.5', hz: 3575000 },
+    { label: '40m', mhz: '7.0', hz: 7047500 },
+    { label: '20m', mhz: '14.0', hz: 14080000 },
+    { label: '17m', mhz: '18.1', hz: 18104000 },
+    { label: '15m', mhz: '21.0', hz: 21140000 },
+    { label: '10m', mhz: '28.1', hz: 28180000 },
+    { label: '6m', mhz: '50.3', hz: 50318000 }
   ];
 
   const [vfoFreq, setVfoFreq] = useState<number>(() => {
@@ -146,6 +156,13 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('ft8_txPeriod', txPeriod.toString());
   }, [txPeriod]);
+
+  const [mode, setMode] = useState<'FT8' | 'FT4'>(() =>
+    (localStorage.getItem('ft8_mode') as 'FT8' | 'FT4') || 'FT8'
+  );
+  useEffect(() => { localStorage.setItem('ft8_mode', mode); }, [mode]);
+
+  const BAND_FREQS = mode === 'FT4' ? BAND_FREQS_FT4 : BAND_FREQS_FT8;
 
   // Global Audio State
   const [audioActive, setAudioActive] = useState(false);
@@ -237,9 +254,9 @@ export default function App() {
 
   const loadWorkedCallsigns = useCallback(async () => {
     const currentBand = getBandFromFreq(vfoFreq);
-    const set = await LogbookService.getWorkedCallsigns(currentBand, "FT8");
+    const set = await LogbookService.getWorkedCallsigns(currentBand, mode);
     setWorkedCallsigns(set);
-  }, [vfoFreq, getBandFromFreq]);
+  }, [vfoFreq, getBandFromFreq, mode]);
 
   useEffect(() => {
     loadWorkedCallsigns();
@@ -617,6 +634,9 @@ export default function App() {
     txPeriodRef.current = txPeriod;
   }, [txPeriod]);
 
+  const modeRef = useRef<'FT8' | 'FT4'>(mode);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
+
   useEffect(() => {
     autoSequenceRef.current = autoSequence;
   }, [autoSequence]);
@@ -689,11 +709,9 @@ export default function App() {
         }
         
         try {
-            // Generate the FT8 waveform for 15 seconds
-            const audioData = encodeFT8(message, { 
-              sampleRate: ctx.sampleRate,
-              baseFrequency: audioFreq 
-            });
+            const audioData = modeRef.current === 'FT4'
+              ? encodeFT4(message, { sampleRate: ctx.sampleRate, baseFrequency: audioFreq })
+              : encodeFT8(message, { sampleRate: ctx.sampleRate, baseFrequency: audioFreq });
             
             const audioBuffer = ctx.createBuffer(1, audioData.length, ctx.sampleRate);
             audioBuffer.copyToChannel(audioData, 0);
@@ -803,7 +821,9 @@ export default function App() {
         }
         
         const payload = e.data.payload || [];
-        const decPeriodIndex = Math.floor(new Date().getUTCSeconds() / 15) % 2;
+        const _now = new Date();
+        const _totalSec = _now.getUTCSeconds() + _now.getUTCMilliseconds() / 1000;
+        const decPeriodIndex = Math.floor(_totalSec / (modeRef.current === 'FT4' ? 7.5 : 15)) % 2;
 
         if (payload.length > 0) {
             setRxLog(prev => {
@@ -1229,7 +1249,7 @@ export default function App() {
                 time_on: timeStr,
                 band: getBandFromFreq(currentVfo),
                 freq: currentVfo / 1e6,
-                mode: "FT8",
+                mode: modeRef.current,
                 submode: "",
                 rst_sent: qsoData.rst_sent || "",
                 rst_rcvd: qsoData.rst_rcvd || "",
@@ -1312,13 +1332,16 @@ export default function App() {
       const ms = now.getUTCMilliseconds();
       const totalSeconds = seconds + (ms / 1000);
       
-      const currentPeriod = Math.floor(seconds / 15);
-      const secondsInWindow = totalSeconds % 15;
-      
-      setWindowProgress((secondsInWindow / 15) * 100);
+      const PERIOD = modeRef.current === 'FT4' ? 7.5 : 15;
+      const RECORD_AT = modeRef.current === 'FT4' ? 6.0 : 13.0;
+
+      const currentPeriod = Math.floor(totalSeconds / PERIOD);
+      const secondsInWindow = totalSeconds % PERIOD;
+
+      setWindowProgress((secondsInWindow / PERIOD) * 100);
       setUtcTime(now.toISOString().substring(11, 19));
-      
-      // Epoch boundary: 0.0s mark
+
+      // Epoch boundary: period start mark
       if (currentPeriod !== periodState.lastPeriod && periodState.lastPeriod !== -1) {
         periodState.lastPeriod = currentPeriod;
         periodState.decodedThisPeriod = false;
@@ -1327,15 +1350,15 @@ export default function App() {
         if (autoSequence && fsmRef.current) {
           fsmRef.current.onPeriodStart(seconds);
         }
-        
-        // Start TX exactly at 0.0s if queued and matches selected period
+
+        // Start TX exactly at period start if queued and matches selected period
         if (queuedTxMessageRef.current && txEnabled && currentPeriod % 2 === txPeriodRef.current) {
             const message = queuedTxMessageRef.current;
             queuedTxMessageRef.current = null;
             setIsTxQueued(false);
             startTx(message);
         }
-        
+
         // Clear RX buffer for the new recording period
         rxBufferRef.current = new Float32Array(0);
       } else if (currentPeriod !== periodState.lastPeriod) {
@@ -1343,23 +1366,26 @@ export default function App() {
         periodState.lastPeriod = currentPeriod;
       }
 
-      // 13.0s mark trigger to Decode
-      if (secondsInWindow >= 13.0 && !periodState.decodedThisPeriod) {
+      // Decode trigger
+      if (secondsInWindow >= RECORD_AT && !periodState.decodedThisPeriod) {
         periodState.decodedThisPeriod = true;
         const audioData = rxBufferRef.current;
-        
+
         if (audioActive && audioCtxRef.current && audioData.length > 0) {
             if (workerRef.current) {
-                const periodStartSeconds = Math.floor(now.getUTCSeconds() / 15) * 15;
+                const periodStartTotalSec = Math.floor(totalSeconds / PERIOD) * PERIOD;
+                const periodStartWholeSec = Math.floor(periodStartTotalSec);
+                const periodStartMs = Math.round((periodStartTotalSec - periodStartWholeSec) * 1000);
                 const periodStart = new Date(now.getTime());
-                periodStart.setUTCSeconds(periodStartSeconds, 0);
+                periodStart.setUTCSeconds(periodStartWholeSec, periodStartMs);
                 const nowString = periodStart.toISOString().substring(11, 19).replace(/:/g, '');
-                
+
                 workerRef.current.postMessage({
                     audioData,
                     sampleRate: audioCtxRef.current.sampleRate,
                     nowString,
-                    decodeDepth
+                    decodeDepth,
+                    mode: modeRef.current
                 });
             }
         }
@@ -1450,7 +1476,7 @@ export default function App() {
         </div>
 
         <div className="flex flex-col items-center">
-          <span className="text-[10px] uppercase tracking-widest text-text-muted mb-1">FT8 Window (15s Sync)</span>
+          <span className="text-[10px] uppercase tracking-widest text-text-muted mb-1">{mode} Window ({mode === 'FT4' ? '7.5s' : '15s'} Sync)</span>
           <div className="w-32 md:w-48 h-1.5 bg-black rounded-full border border-border-subtle relative overflow-hidden">
              <div 
               className="absolute left-0 top-0 h-full bg-green-600 dark:bg-[#4caf50] transition-all duration-75 ease-linear shadow-[0_0_5px_rgba(76,175,80,0.5)]"
@@ -1510,16 +1536,28 @@ export default function App() {
           })}
         </div>
         
+        {/* Mode Toggle */}
+        <button
+          onClick={() => setMode(m => m === 'FT8' ? 'FT4' : 'FT8')}
+          className={`shrink-0 px-4 py-1.5 rounded text-[11px] font-mono uppercase font-bold border transition-colors ${
+            mode === 'FT8'
+              ? 'bg-[#0f1e30] text-blue-400 border-blue-800 hover:bg-[#162540]'
+              : 'bg-[#2a1505] text-orange-400 border-orange-800 hover:bg-[#3d2007]'
+          }`}
+        >
+          {mode}
+        </button>
+
         {/* PTT Period Toggle */}
         <button
           onClick={() => setTxPeriod(p => p === 0 ? 1 : 0)}
           className={`shrink-0 px-4 py-1.5 rounded text-[11px] font-mono uppercase font-bold border transition-colors ${
-            txPeriod === 0 
-              ? 'bg-[#0f2e1b] text-green-400 border-green-800 hover:bg-[#154628]' 
+            txPeriod === 0
+              ? 'bg-[#0f2e1b] text-green-400 border-green-800 hover:bg-[#154628]'
               : 'bg-[#3d1f05] text-amber-500 border-amber-700 hover:bg-[#5a2e07]'
           }`}
         >
-          Tx: {txPeriod === 0 ? 'Even (:00)' : 'Odd (:15)'}
+          Tx: {txPeriod === 0 ? 'Even (:00)' : `Odd (${mode === 'FT4' ? ':07' : ':15'})`}
         </button>
       </div>
 

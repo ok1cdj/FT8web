@@ -80,7 +80,7 @@ Log your FT8 QSOs automatically with **Wavelog** or **Cloudlog**:
 
 ## 🗺️ Roadmap / Upcoming Features
 - [ ] Intensive testing with more radios
-- [ ] FT4 Mode support (7.5s T/R cycles via `@e04/ft8ts` mode switching)
+- [x] FT4 Mode support (7.5s T/R cycles via `@e04/ft8ts` mode switching)
 - [ ] Built-in better logbook
 
 ### Tested Radios
