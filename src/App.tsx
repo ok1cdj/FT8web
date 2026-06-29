@@ -270,6 +270,10 @@ export default function App() {
   const [icomAddress, setIcomAddress] = useState<string>(() => {
     return localStorage.getItem('ft8_icomAddress') || '94';
   });
+  const [cp2105Channel, setCp2105Channel] = useState<0 | 1>(() => {
+    return (Number(localStorage.getItem('ft8_cp2105Channel')) || 0) as 0 | 1;
+  });
+  const [isDualPort, setIsDualPort] = useState<boolean>(false);
 
   const [maxLogEntries, setMaxLogEntries] = useState<number>(() => {
     const saved = localStorage.getItem('ft8_maxLogEntries');
@@ -349,12 +353,13 @@ export default function App() {
       localStorage.setItem('ft8_catMode', catMode);
       localStorage.setItem('ft8_catBaudRate', catBaudRate.toString());
       localStorage.setItem('ft8_icomAddress', icomAddress);
+      localStorage.setItem('ft8_cp2105Channel', cp2105Channel.toString());
       localStorage.setItem('ft8_maxLogEntries', maxLogEntries.toString());
       localStorage.setItem('ft8_wavelogEnabled', String(wavelogEnabled));
       localStorage.setItem('ft8_wavelogUrl', wavelogUrl);
       localStorage.setItem('ft8_wavelogApiKey', wavelogApiKey);
       localStorage.setItem('ft8_wavelogStationProfileId', wavelogStationProfileId);
-  }, [myCall, myGrid, txFreq, decodeDepth, maxRetries, finalMessageMode, catMode, catBaudRate, icomAddress, maxLogEntries, wavelogEnabled, wavelogUrl, wavelogApiKey, wavelogStationProfileId]);
+  }, [myCall, myGrid, txFreq, decodeDepth, maxRetries, finalMessageMode, catMode, catBaudRate, icomAddress, cp2105Channel, maxLogEntries, wavelogEnabled, wavelogUrl, wavelogApiKey, wavelogStationProfileId]);
 
   // UI State
   const [showSettings, setShowSettings] = useState(false);
@@ -462,6 +467,18 @@ export default function App() {
     };
   }, [serialPort, catMode, catBaudRate, icomAddress]);
 
+  // When the user changes the CP2105 channel while a dual-port device is already
+  // selected, swap to a new wrapper using the same USB device — no picker shown.
+  useEffect(() => {
+    if (!isDualPort || !serialPort || !serialPort.withChannel) return;
+    const newPort = serialPort.withChannel(cp2105Channel);
+    if (catRef.current) {
+      catRef.current.disconnect().catch(() => {});
+      catRef.current = null;
+    }
+    setSerialPort(newPort);
+  }, [cp2105Channel]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const selectBand = (hz: number) => {
     setVfoFreq(hz);
     setRxLog([]);
@@ -486,14 +503,15 @@ export default function App() {
         { usbVendorId: 0x0483, vendorId: 1155 }   // STMicroelectronics (QDX)
       ];
 
-      const port = await UniversalSerialPort.requestPort({ filters: serialFilters });
-      
+      const port = await UniversalSerialPort.requestPort({ filters: serialFilters, channelIndex: cp2105Channel });
+
       // Cleanly disconnect old port before switching to a new selected port
       if (catRef.current) {
         await catRef.current.disconnect().catch(() => {});
         catRef.current = null;
       }
 
+      setIsDualPort(port.isDualPort ?? false);
       setSerialPort(port);
       setCatTestResult("Port selected successfully. Ready to test.");
     } catch (e: any) {
@@ -1988,10 +2006,24 @@ export default function App() {
                 </div>
               )}
 
+              {isDualPort && /Android/i.test(navigator.userAgent) && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] uppercase tracking-widest text-text-muted">CP2105 Channel</label>
+                  <select
+                    value={cp2105Channel}
+                    onChange={e => setCp2105Channel(Number(e.target.value) as 0 | 1)}
+                    className="bg-app border border-border-input text-text-main rounded px-3 py-2 text-xs font-mono w-full focus:outline-none focus:border-[#4caf50]"
+                  >
+                    <option value={0}>Port A — Enhanced (Interface 0)</option>
+                    <option value={1}>Port B — Standard (Interface 1)</option>
+                  </select>
+                </div>
+              )}
+
               {catMode !== 'manual' && (
                 <div className="flex flex-col gap-2 pt-2">
                   <div className="flex gap-2">
-                    <button 
+                    <button
                       onClick={handleSelectSerialPort}
                       className="flex-1 bg-app border border-border-input text-text-main hover:bg-[#4caf50] hover:text-white hover:border-[#4caf50] rounded px-3 py-2 text-xs font-mono font-bold transition-colors"
                     >
