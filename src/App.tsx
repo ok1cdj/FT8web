@@ -589,7 +589,7 @@ export default function App() {
     return saved !== null ? saved === 'true' : true;
   });
   const [fsmState, setFsmState] = useState<string>('IDLE');
-  const [fsmQueueLength, setFsmQueueLength] = useState<number>(0);
+  const [fsmQueue, setFsmQueue] = useState<QueuedCaller[]>([]);
   const fsmRef = useRef<FT8FSM | null>(null);
 
   useEffect(() => {
@@ -1213,7 +1213,7 @@ export default function App() {
 
       fsm.onStateChange = (state, target, queue) => {
         setFsmState(state);
-        setFsmQueueLength(queue.length);
+        setFsmQueue([...queue]);
         setTargetCall(target || '');
       };
 
@@ -1925,10 +1925,19 @@ export default function App() {
                  <span className="text-[10px] font-mono uppercase bg-black/40 px-2 py-0.5 rounded text-sky-400 font-bold tracking-wider">
                    {autoSequence ? fsmState : "OFF"}
                  </span>
-                 {autoSequence && fsmQueueLength > 0 && (
-                   <span className="text-[8px] text-zinc-500 font-mono">Q: {fsmQueueLength} pending</span>
-                 )}
               </button>
+              {autoSequence && fsmQueue.length > 0 && (
+                <div className="w-full lg:w-32 mt-1 max-h-[72px] overflow-y-auto flex flex-col gap-0.5 custom-scrollbar">
+                  {fsmQueue.map(c => (
+                    <div key={c.callsign} className="flex items-center justify-between px-1.5 py-0.5 rounded bg-black/30 border border-border-subtle/40">
+                      <span className="text-[9px] font-mono font-bold text-sky-400 tracking-wide">{c.callsign}</span>
+                      <span className="text-[9px] font-mono text-zinc-400">
+                        {c.report ?? '?'}{c.distance ? ` ${c.distance}km` : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Enable TX PTT Trigger */}
