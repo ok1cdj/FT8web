@@ -971,22 +971,22 @@ export default function App() {
     // Period Markers (mode-aware boundaries)
     const currentDate = new Date();
     const _wSec = currentDate.getUTCSeconds() + currentDate.getUTCMilliseconds() / 1000;
-    const _wPeriod = modeRef.current === 'FT4' ? 7.5 : 15;
+    const _wPeriod = mode === 'FT4' ? 7.5 : 15;
     const _wIdx = Math.floor(_wSec / _wPeriod);
 
     if (_wIdx !== lastPeriodRef.current) {
       lastPeriodRef.current = _wIdx;
-      
+
       // Draw divider line
-      ctx.fillStyle = 'rgba(255, 215, 0, 0.4)'; // Semi-transparent gold
+      ctx.fillStyle = 'rgba(255, 215, 0, 0.4)';
       ctx.fillRect(0, 0, width, 1);
-      
-      // Target text cleanly below the line (at Y=12)
+
+      // Timestamp label
       ctx.fillStyle = 'rgba(255, 215, 0, 0.9)';
       ctx.font = '10px "JetBrains Mono", monospace';
       ctx.fillText(currentDate.toISOString().substring(11, 19) + ' UTC', 4, 12);
     }
-  }, []);
+  }, [mode]);
 
   const toggleAudio = async (forcedDeviceId?: string) => {
     const targetDeviceId = typeof forcedDeviceId === 'string' ? forcedDeviceId : selectedDeviceId;
