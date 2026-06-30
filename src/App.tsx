@@ -1543,7 +1543,14 @@ export default function App() {
         
         {/* Mode Toggle */}
         <button
-          onClick={() => setMode(m => m === 'FT8' ? 'FT4' : 'FT8')}
+          onClick={() => {
+            const newMode = mode === 'FT8' ? 'FT4' : 'FT8';
+            const freqs = newMode === 'FT4' ? BAND_FREQS_FT4 : BAND_FREQS_FT8;
+            const currentBand = getBandFromFreq(vfoFreq);
+            const match = freqs.find(b => b.label === currentBand);
+            setMode(newMode);
+            if (match) selectBand(match.hz);
+          }}
           className={`shrink-0 px-4 py-1.5 rounded text-[11px] font-mono uppercase font-bold border transition-colors ${
             mode === 'FT8'
               ? 'bg-[#0f1e30] text-blue-400 border-blue-800 hover:bg-[#162540]'
