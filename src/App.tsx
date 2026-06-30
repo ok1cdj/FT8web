@@ -132,11 +132,14 @@ export default function App() {
   const BAND_FREQS_FT4 = [
     { label: '80m', mhz: '3.5', hz: 3575000 },
     { label: '40m', mhz: '7.0', hz: 7047500 },
+    { label: '30m', mhz: '10.1', hz: 10140000 },
     { label: '20m', mhz: '14.0', hz: 14080000 },
     { label: '17m', mhz: '18.1', hz: 18104000 },
-    { label: '15m', mhz: '21.0', hz: 21140000 },
+    { label: '15m', mhz: '21.1', hz: 21140000 },
+    { label: '12m', mhz: '24.9', hz: 24919000 },
     { label: '10m', mhz: '28.1', hz: 28180000 },
-    { label: '6m', mhz: '50.3', hz: 50318000 }
+    { label: '6m',  mhz: '50.3', hz: 50318000 },
+    { label: '2m',  mhz: '144.1', hz: 144170000 }
   ];
 
   const [vfoFreq, setVfoFreq] = useState<number>(() => {
