@@ -182,10 +182,11 @@ export function LogBookViewer({
                     <div className="text-center text-text-muted mt-8 italic text-[11px]">No QSOs logged yet.</div>
                 ) : (
                     <div className="w-full">
-                        <div className="sticky top-0 bg-panel text-text-muted text-[10px] uppercase tracking-wider grid grid-cols-[130px_100px_50px_40px_40px_60px_1fr] gap-2 pb-2 mb-1 border-b border-border-subtle z-10 font-bold text-left">
+                        <div className="sticky top-0 bg-panel text-text-muted text-[10px] uppercase tracking-wider grid grid-cols-[130px_100px_50px_40px_40px_40px_60px_1fr] gap-2 pb-2 mb-1 border-b border-border-subtle z-10 font-bold text-left">
                             <div className="text-left">Date/Time (UTC)</div>
                             <div className="text-left">Call</div>
                             <div className="text-left">Band</div>
+                            <div className="text-left">Mode</div>
                             <div className="text-left">Sent</div>
                             <div className="text-left">Rcvd</div>
                             <div className="text-left">Grid</div>
@@ -193,13 +194,13 @@ export function LogBookViewer({
                         </div>
                         <div className="flex flex-col">
                             {qsos.map(qso => (
-                                <div key={qso.id} className="grid grid-cols-[130px_100px_50px_40px_40px_60px_1fr] gap-2 py-1.5 border-b border-border-subtle/30 hover:bg-btn transition-colors items-center text-[11px] text-left">
+                                <div key={qso.id} className="grid grid-cols-[130px_100px_50px_40px_40px_40px_60px_1fr] gap-2 py-1.5 border-b border-border-subtle/30 hover:bg-btn transition-colors items-center text-[11px] text-left">
                                     <div className="font-mono text-text-muted truncate text-left">{qso.qso_date} {qso.time_on}</div>
                                     <div className="font-bold text-sky-600 dark:text-sky-400 truncate tracking-wide text-left flex items-center gap-1.5 min-w-0">
                                         <span className="truncate">{qso.call}</span>
                                         {wavelogEnabled && (
-                                            <span 
-                                                className={`text-[10px] select-none shrink-0 ${qso.synced ? 'text-green-500' : 'text-zinc-500 opacity-40'}`} 
+                                            <span
+                                                className={`text-[10px] select-none shrink-0 ${qso.synced ? 'text-green-500' : 'text-zinc-500 opacity-40'}`}
                                                 title={qso.synced ? "Uploaded to Wavelog / Synced" : "Pending Cloud Upload"}
                                             >
                                                 ☁️
@@ -207,6 +208,7 @@ export function LogBookViewer({
                                         )}
                                     </div>
                                     <div className="text-text-muted text-left">{qso.band}</div>
+                                    <div className={`font-mono font-bold text-left text-[10px] ${qso.mode === 'FT4' ? 'text-orange-400' : 'text-blue-400'}`}>{qso.mode || 'FT8'}</div>
                                     <div className="text-green-600 dark:text-[#4caf50] font-mono text-left">{qso.rst_sent}</div>
                                     <div className="text-red-650 dark:text-red-450 font-mono text-left">{qso.rst_rcvd}</div>
                                     <div className="text-zinc-600 dark:text-zinc-400 font-mono tracking-wider text-left">{qso.gridsquare || '-'}</div>
