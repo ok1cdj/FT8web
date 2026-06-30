@@ -20,6 +20,7 @@ export function LogBookViewer({
     const [isSyncing, setIsSyncing] = useState(false);
     const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
     const [inlineSyncingIds, setInlineSyncingIds] = useState<Record<number, boolean>>({});
+    const [editingQso, setEditingQso] = useState<QSO | null>(null);
 
     const handleSingleQsoSync = async (qso: QSO) => {
         if (!qso.id) return;
@@ -85,6 +86,14 @@ export function LogBookViewer({
     const handleDelete = async (id: number) => {
         await logBook.deleteQSO(id);
         setDeletingId(null);
+        await fetchQsos();
+        window.dispatchEvent(new Event('qso-logged'));
+    };
+
+    const handleEditSave = async () => {
+        if (!editingQso?.id) return;
+        await logBook.updateQSO({ ...editingQso, synced: false });
+        setEditingQso(null);
         await fetchQsos();
         window.dispatchEvent(new Event('qso-logged'));
     };
@@ -230,6 +239,16 @@ export function LogBookViewer({
                                             </div>
                                         ) : (
                                             <div className="flex items-center gap-1.5">
+                                                <button
+                                                    onClick={() => setEditingQso({ ...qso })}
+                                                    className="text-zinc-400 hover:text-blue-400 hover:bg-blue-500/10 p-1 rounded transition-colors group flex items-center justify-center transform active:scale-95 cursor-pointer"
+                                                    title="Edit QSO"
+                                                >
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="opacity-70 group-hover:opacity-100">
+                                                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                                    </svg>
+                                                </button>
                                                 {wavelogEnabled && (
                                                     <button 
                                                         onClick={() => handleSingleQsoSync(qso)}
@@ -269,6 +288,69 @@ export function LogBookViewer({
                     </div>
                 )}
             </div>
+        {editingQso && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div className="bg-panel border border-border-subtle rounded-lg shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+                    <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
+                        <h2 className="text-sm font-bold uppercase tracking-widest text-text-main">Edit QSO</h2>
+                        <button onClick={() => setEditingQso(null)} className="text-text-muted hover:text-text-main transition-colors cursor-pointer">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div className="px-5 py-4 grid grid-cols-2 gap-3">
+                        {([
+                            { key: 'call', label: 'Callsign', type: 'text', placeholder: 'AA1BB' },
+                            { key: 'qso_date', label: 'Date (UTC)', type: 'text', placeholder: 'YYYYMMDD' },
+                            { key: 'time_on', label: 'Time (UTC)', type: 'text', placeholder: 'HHMMSS' },
+                            { key: 'band', label: 'Band', type: 'text', placeholder: '20m' },
+                            { key: 'freq', label: 'Freq (MHz)', type: 'number', placeholder: '14.074' },
+                            { key: 'rst_sent', label: 'RST Sent', type: 'text', placeholder: '-10' },
+                            { key: 'rst_rcvd', label: 'RST Rcvd', type: 'text', placeholder: '-07' },
+                            { key: 'gridsquare', label: 'Grid', type: 'text', placeholder: 'JO70' },
+                        ] as { key: keyof QSO; label: string; type: string; placeholder: string }[]).map(({ key, label, type, placeholder }) => (
+                            <div key={key} className="flex flex-col gap-1">
+                                <label className="text-[10px] uppercase tracking-wider text-text-muted">{label}</label>
+                                <input
+                                    type={type}
+                                    step={type === 'number' ? 0.001 : undefined}
+                                    placeholder={placeholder}
+                                    value={editingQso[key] as string | number ?? ''}
+                                    onChange={e => setEditingQso(prev => prev ? { ...prev, [key]: type === 'number' ? parseFloat(e.target.value) : e.target.value } : null)}
+                                    className="bg-btn border border-border-input rounded px-2 py-1 text-xs text-text-main outline-none focus:border-[#4caf50] transition-colors"
+                                />
+                            </div>
+                        ))}
+                        <div className="flex flex-col gap-1">
+                            <label className="text-[10px] uppercase tracking-wider text-text-muted">Mode</label>
+                            <select
+                                value={editingQso.mode ?? 'FT8'}
+                                onChange={e => setEditingQso(prev => prev ? { ...prev, mode: e.target.value } : null)}
+                                className="bg-btn border border-border-input rounded px-2 py-1 text-xs text-text-main outline-none focus:border-[#4caf50] transition-colors cursor-pointer"
+                            >
+                                <option value="FT8">FT8</option>
+                                <option value="FT4">FT4</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div className="flex justify-end gap-2 px-5 py-4 border-t border-border-subtle">
+                        <button
+                            onClick={() => setEditingQso(null)}
+                            className="px-4 py-1.5 rounded text-xs font-bold uppercase tracking-wider bg-btn border border-border-input text-text-muted hover:text-text-main hover:bg-btn-hover transition-colors cursor-pointer"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={handleEditSave}
+                            className="px-4 py-1.5 rounded text-xs font-bold uppercase tracking-wider bg-[#4caf50]/10 border border-[#4caf50]/40 text-[#4caf50] hover:bg-[#4caf50] hover:text-white hover:border-[#4caf50] transition-colors cursor-pointer"
+                        >
+                            Save
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
         </div>
     );
 }
