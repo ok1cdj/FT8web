@@ -143,6 +143,8 @@ export default function App() {
     const saved = localStorage.getItem('ft8_vfoFreq');
     return saved ? Number(saved) : 14074000;
   });
+  const [editingVfo, setEditingVfo] = useState(false);
+  const [vfoInputStr, setVfoInputStr] = useState('');
 
   useEffect(() => {
     localStorage.setItem('ft8_vfoFreq', vfoFreq.toString());
@@ -502,6 +504,14 @@ export default function App() {
     setQsoLog([]);
     if (catRef.current && catMode !== 'manual') {
       catRef.current.setFrequency(hz).catch(e => console.error("CAT Set Freq Error:", e));
+    }
+  };
+
+  const commitVfoInput = () => {
+    setEditingVfo(false);
+    const mhz = parseFloat(vfoInputStr.replace(',', '.'));
+    if (!isNaN(mhz) && mhz >= 1 && mhz <= 450) {
+      selectBand(Math.round(mhz * 1_000_000));
     }
   };
 
@@ -1471,13 +1481,35 @@ export default function App() {
         {/* --- RF Frequency Readout --- */}
         <div className="flex flex-col items-center justify-center min-w-[180px]">
           <span className="text-[10px] uppercase tracking-widest text-text-muted mb-1">Radio VFO</span>
-          <span className={`text-[26px] font-mono font-bold leading-none tracking-tight ${
-            catMode !== 'manual' && !catConnected 
-              ? 'text-red-500 shadow-[0_0_8px_rgba(239,68,68,0.3)]' 
-              : 'text-green-600 dark:text-[#4caf50]'
-          }`}>
-            {formatFrequency(vfoFreq)}
-          </span>
+          {editingVfo ? (
+            <input
+              type="text"
+              className="text-[26px] font-mono font-bold leading-none tracking-tight text-green-600 dark:text-[#4caf50] bg-transparent border-b border-[#4caf50] outline-none w-[180px] text-center"
+              value={vfoInputStr}
+              autoFocus
+              onChange={e => setVfoInputStr(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') commitVfoInput();
+                if (e.key === 'Escape') setEditingVfo(false);
+              }}
+              onBlur={commitVfoInput}
+            />
+          ) : (
+            <span
+              className={`text-[26px] font-mono font-bold leading-none tracking-tight cursor-pointer hover:opacity-70 transition-opacity ${
+                catMode !== 'manual' && !catConnected
+                  ? 'text-red-500 shadow-[0_0_8px_rgba(239,68,68,0.3)]'
+                  : 'text-green-600 dark:text-[#4caf50]'
+              }`}
+              title="Click to enter custom frequency (MHz)"
+              onClick={() => {
+                setVfoInputStr((vfoFreq / 1_000_000).toFixed(6));
+                setEditingVfo(true);
+              }}
+            >
+              {formatFrequency(vfoFreq)}
+            </span>
+          )}
         </div>
 
         <div className="flex flex-col items-center">
