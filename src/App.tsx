@@ -563,6 +563,7 @@ export default function App() {
   const [rxLog, setRxLog] = useState<FT8DecodedMessage[]>([]);
   const [qsoLog, setQsoLog] = useState<FT8DecodedMessage[]>([]);
   const [isTransmitting, setIsTransmitting] = useState(false);
+  const isTransmittingRef = useRef(false);
   const [isTxQueued, setIsTxQueued] = useState(false);
   
   // TX Controls State
@@ -636,6 +637,8 @@ export default function App() {
 
   const modeRef = useRef<'FT8' | 'FT4'>(mode);
   useEffect(() => { modeRef.current = mode; }, [mode]);
+
+  useEffect(() => { isTransmittingRef.current = isTransmitting; }, [isTransmitting]);
 
   useEffect(() => {
     autoSequenceRef.current = autoSequence;
@@ -901,7 +904,7 @@ export default function App() {
 
   const drawWaterfall = useCallback((time: number) => {
     // TX Freeze Logic: completely freeze waterfall if Transmitting
-    if (isTransmitting) return;
+    if (isTransmittingRef.current) return;
 
     // Throttle to 100ms (10fps). 1 pixel per frame = 10 px / sec.
     if (time - lastDrawTimeRef.current < 100) return;
@@ -965,12 +968,14 @@ export default function App() {
     
     ctx.putImageData(rowImg, 0, 0);
 
-    // Period Markers (15s boundaries)
+    // Period Markers (mode-aware boundaries)
     const currentDate = new Date();
-    const seconds = currentDate.getUTCSeconds();
-    
-    if (seconds % 15 === 0 && lastPeriodRef.current !== seconds) {
-      lastPeriodRef.current = seconds;
+    const _wSec = currentDate.getUTCSeconds() + currentDate.getUTCMilliseconds() / 1000;
+    const _wPeriod = modeRef.current === 'FT4' ? 7.5 : 15;
+    const _wIdx = Math.floor(_wSec / _wPeriod);
+
+    if (_wIdx !== lastPeriodRef.current) {
+      lastPeriodRef.current = _wIdx;
       
       // Draw divider line
       ctx.fillStyle = 'rgba(255, 215, 0, 0.4)'; // Semi-transparent gold
@@ -981,7 +986,7 @@ export default function App() {
       ctx.font = '10px "JetBrains Mono", monospace';
       ctx.fillText(currentDate.toISOString().substring(11, 19) + ' UTC', 4, 12);
     }
-  }, [isTransmitting]);
+  }, []);
 
   const toggleAudio = async (forcedDeviceId?: string) => {
     const targetDeviceId = typeof forcedDeviceId === 'string' ? forcedDeviceId : selectedDeviceId;
@@ -1348,7 +1353,7 @@ export default function App() {
 
         // Drive FSM at slot transition
         if (autoSequence && fsmRef.current) {
-          fsmRef.current.onPeriodStart(seconds);
+          fsmRef.current.onPeriodStart(currentPeriod);
         }
 
         // Start TX exactly at period start if queued and matches selected period

@@ -128,13 +128,15 @@ export default class FT8FSM {
     }
 
     /**
-     * Triggered externally at exactly :00, :15, :30, :45 of every minute UTC.
+     * Triggered externally at every period boundary. currentPeriod is the
+     * absolute period index (0, 1, 2, …) computed by the timing loop using
+     * the correct period length for the active mode (15 s for FT8, 7.5 s for FT4).
      */
-    public onPeriodStart(currentUtcSecond: number) {
+    public onPeriodStart(currentPeriod: number) {
         if (!this.isTxEnabled) return;
 
         // Check if we are allowed to TX in the current slot
-        const periodIndex = Math.floor(currentUtcSecond / 15) % 2;
+        const periodIndex = currentPeriod % 2;
         if (periodIndex !== this.myPeriod) return;
 
         let txString: string | null = null;
