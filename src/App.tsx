@@ -1769,12 +1769,12 @@ export default function App() {
                className="w-full h-full block cursor-crosshair"
                onClick={handleWaterfallClick}
             />
-            {/* TX Frequency Overlay Bar (50 Hz wide) */}
-            <div 
+            {/* TX Frequency Overlay Bar (50 Hz for FT8, 83 Hz for FT4) */}
+            <div
                className="absolute top-0 bottom-0 bg-red-500/35 border-x border-red-500/50 pointer-events-none transition-all duration-75"
-               style={{ 
-                 left: `${((txFreq - 200) / 2800) * 100}%`, 
-                 width: `${(50 / 2800) * 100}%`,
+               style={{
+                 left: `${((txFreq - 200) / 2800) * 100}%`,
+                 width: `${((mode === 'FT4' ? 83.33 : 50) / 2800) * 100}%`,
                  transform: 'translateX(-50%)'
                }}
             />
