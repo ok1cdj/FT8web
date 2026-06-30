@@ -798,7 +798,8 @@ export default function App() {
   const rxBufferRef = useRef<Float32Array>(new Float32Array(0));
   const workerRef = useRef<Worker | null>(null);
   const lastDrawTimeRef = useRef<number>(0);
-  const lastPeriodRef = useRef<number>(-1);
+  const waterfallRowsRef = useRef<number>(0);
+  const pendingMarkersRef = useRef<{ atRow: number; label: string }[]>([]);
 
   const getDevices = async () => {
     try {
@@ -981,23 +982,26 @@ export default function App() {
     
     ctx.putImageData(rowImg, 0, 0);
 
-    // Period Markers (mode-aware boundaries)
-    const currentDate = new Date();
-    const _wSec = currentDate.getUTCSeconds() + currentDate.getUTCMilliseconds() / 1000;
-    const _wPeriod = mode === 'FT4' ? 7.5 : 15;
-    const _wIdx = Math.floor(_wSec / _wPeriod);
+    // Advance the row counter (naturally pauses during TX since drawWaterfall returns early)
+    waterfallRowsRef.current += 1;
+    const totalRows = waterfallRowsRef.current;
 
-    if (_wIdx !== lastPeriodRef.current) {
-      lastPeriodRef.current = _wIdx;
+    // Prune markers that have scrolled off the bottom of the canvas
+    pendingMarkersRef.current = pendingMarkersRef.current.filter(
+      m => totalRows - m.atRow < height
+    );
 
-      // Draw divider line
+    // Draw each queued period marker at its correct canvas Y position
+    for (const marker of pendingMarkersRef.current) {
+      const y = totalRows - marker.atRow;
       ctx.fillStyle = 'rgba(255, 215, 0, 0.4)';
-      ctx.fillRect(0, 0, width, 1);
-
-      // Timestamp label
-      ctx.fillStyle = 'rgba(255, 215, 0, 0.9)';
-      ctx.font = '10px "JetBrains Mono", monospace';
-      ctx.fillText(currentDate.toISOString().substring(11, 19) + ' UTC', 4, 12);
+      ctx.fillRect(0, y, width, 1);
+      // Draw the timestamp label once, just below the line, when it first enters the canvas
+      if (y <= 1) {
+        ctx.fillStyle = 'rgba(255, 215, 0, 0.9)';
+        ctx.font = '10px "JetBrains Mono", monospace';
+        ctx.fillText(marker.label, 4, y + 12);
+      }
     }
   }, [mode]);
 
@@ -1363,6 +1367,12 @@ export default function App() {
       if (currentPeriod !== periodState.lastPeriod && periodState.lastPeriod !== -1) {
         periodState.lastPeriod = currentPeriod;
         periodState.decodedThisPeriod = false;
+
+        // Queue a waterfall period marker at the current canvas row
+        pendingMarkersRef.current.push({
+          atRow: waterfallRowsRef.current,
+          label: now.toISOString().substring(11, 19) + ' UTC',
+        });
 
         // Drive FSM at slot transition
         if (autoSequence && fsmRef.current) {
