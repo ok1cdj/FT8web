@@ -401,7 +401,7 @@ export default class FT8FSM {
                 : `-${String(Math.abs(snr)).padStart(2, '0')}`;
             this.targetReport = formattedSnr;
 
-            this.currentState = 'SENDING_REPORT';
+            this.currentState = topCaller.report != null ? 'SENDING_R_REPORT' : 'SENDING_REPORT';
             this.retryCount = 0;
             this.hasTransmittedThisQso = false;
             this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
