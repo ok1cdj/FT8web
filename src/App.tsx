@@ -1705,7 +1705,8 @@ export default function App() {
 
                         // Auto-set TX period to the OPPOSITE of the caller's period
                         const seconds = parseInt(log.time.substring(4, 6), 10);
-                        const callerPeriod = Math.floor(seconds / 15) % 2; // 0 for even, 1 for odd
+                        const periodLen = mode === 'FT4' ? 7.5 : 15;
+                        const callerPeriod = Math.floor(seconds / periodLen) % 2;
                         setTxPeriod(callerPeriod === 0 ? 1 : 0);
                       }}
                       className={`grid grid-cols-[55px_40px_60px_1fr] gap-2 hover:bg-btn cursor-pointer p-1 rounded transition-colors group text-[11px] items-center ${
@@ -1807,7 +1808,8 @@ export default function App() {
                       // If incoming message, set TX period to OPPOSITE of caller's period
                       if (!log.isTx && log.time && log.time.length >= 6) {
                         const seconds = parseInt(log.time.substring(4, 6), 10);
-                        const callerPeriod = Math.floor(seconds / 15) % 2;
+                        const periodLen = mode === 'FT4' ? 7.5 : 15;
+                        const callerPeriod = Math.floor(seconds / periodLen) % 2;
                         setTxPeriod(callerPeriod === 0 ? 1 : 0);
                       }
                     }}
