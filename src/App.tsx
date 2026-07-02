@@ -1686,12 +1686,23 @@ export default function App() {
                               fsmRef.current.targetGrid = null;
                             }
                             if (autoSequence) {
-                              fsmRef.current.updateState('REPLY_SENDING', call);
+                              const msgContent = log.message.trim().split(/\s+/).slice(2).join(' ').toUpperCase();
+                              const reportMatch = msgContent.match(/^R?([+-]\d+)$/);
+                              if (reportMatch) {
+                                fsmRef.current.myReceivedReport = reportMatch[1];
+                                const snr = log.snr !== undefined ? Math.round(log.snr) : -12;
+                                fsmRef.current.targetReport = snr >= 0
+                                  ? `+${String(snr).padStart(2, '0')}`
+                                  : `-${String(Math.abs(snr)).padStart(2, '0')}`;
+                                fsmRef.current.updateState('SENDING_R_REPORT', call);
+                              } else {
+                                fsmRef.current.updateState('REPLY_SENDING', call);
+                              }
                               setTxEnabled(true);
                             }
                           }
                         }
-                        
+
                         // Auto-set TX period to the OPPOSITE of the caller's period
                         const seconds = parseInt(log.time.substring(4, 6), 10);
                         const callerPeriod = Math.floor(seconds / 15) % 2; // 0 for even, 1 for odd
@@ -1775,7 +1786,18 @@ export default function App() {
                               fsmRef.current.targetGrid = null;
                             }
                             if (autoSequence) {
-                              fsmRef.current.updateState('REPLY_SENDING', callsign);
+                              const msgContent = log.message.trim().split(/\s+/).slice(2).join(' ').toUpperCase();
+                              const reportMatch = msgContent.match(/^R?([+-]\d+)$/);
+                              if (reportMatch) {
+                                fsmRef.current.myReceivedReport = reportMatch[1];
+                                const snr = log.snr !== undefined ? Math.round(log.snr) : -12;
+                                fsmRef.current.targetReport = snr >= 0
+                                  ? `+${String(snr).padStart(2, '0')}`
+                                  : `-${String(Math.abs(snr)).padStart(2, '0')}`;
+                                fsmRef.current.updateState('SENDING_R_REPORT', callsign);
+                              } else {
+                                fsmRef.current.updateState('REPLY_SENDING', callsign);
+                              }
                               setTxEnabled(true);
                             }
                           }
