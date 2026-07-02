@@ -398,6 +398,25 @@ export function LogBookViewer({
                                 <option value="FT4">FT4</option>
                             </select>
                         </div>
+                        <div className="flex flex-col gap-1 col-span-2">
+                            <label className="text-[10px] uppercase tracking-wider text-text-muted">DXCC Entity</label>
+                            <div className="bg-btn border border-border-input rounded px-2 py-1 text-xs text-text-muted select-none">
+                                {(() => {
+                                    const entity = editingQso.dxcc
+                                        ? dxccService.getByAdifCode(editingQso.dxcc)
+                                        : (dxccService.loaded ? dxccService.lookup(editingQso.call) : null);
+                                    return entity ? `${entity.name} (${entity.primaryPrefix})` : '—';
+                                })()}
+                            </div>
+                        </div>
+                        <div className="flex flex-col gap-1 col-span-2">
+                            <label className="text-[10px] uppercase tracking-wider text-text-muted">DXCC Entity</label>
+                            <div className="bg-btn border border-border-input rounded px-2 py-1 text-xs text-text-muted select-none">
+                                {editingQso.dxcc
+                                    ? (dxccService.getByAdifCode(editingQso.dxcc)?.name ?? `ADIF #${editingQso.dxcc}`)
+                                    : (dxccService.loaded ? (dxccService.lookup(editingQso.call)?.name ?? '—') : '—')}
+                            </div>
+                        </div>
                     </div>
                     <div className="flex justify-end gap-2 px-5 py-4 border-t border-border-subtle">
                         <button

@@ -280,21 +280,31 @@ export default function App() {
     };
   }, [loadWorkedCallsigns]);
 
+  const buildWorkedDxccSet = async (): Promise<Set<number>> => {
+    const qsos = await logBook.getAllQSOs();
+    const worked = new Set<number>();
+    for (const qso of qsos) {
+      let code = qso.dxcc;
+      if (code === undefined) {
+        const entity = dxccService.lookup(qso.call);
+        if (entity) {
+          code = entity.adifCode;
+          logBook.updateQSO({ ...qso, dxcc: code }).catch(() => {});
+        }
+      }
+      if (code && code > 0) worked.add(code);
+    }
+    return worked;
+  };
+
   useEffect(() => {
     dxccService.load().then(async () => {
+      if (!dxccService.loaded) { setDxccReady(true); return; }
       try {
-        const qsos = await logBook.getAllQSOs();
-        for (const qso of qsos) {
-          if (qso.dxcc === undefined) {
-            const entity = dxccService.lookup(qso.call);
-            if (entity) await logBook.updateQSO({ ...qso, dxcc: entity.adifCode });
-          }
-        }
+        setWorkedDxccEntities(await buildWorkedDxccSet());
       } catch (e) {
-        console.warn('[DXCC] Backfill failed:', e);
+        console.warn('[DXCC] Init failed:', e);
       }
-      const worked = await LogbookService.getWorkedDxccEntities();
-      setWorkedDxccEntities(worked);
       setDxccReady(true);
     });
   }, []);
@@ -302,7 +312,7 @@ export default function App() {
   useEffect(() => {
     if (!dxccReady) return;
     const handler = async () => {
-      setWorkedDxccEntities(await LogbookService.getWorkedDxccEntities());
+      setWorkedDxccEntities(await buildWorkedDxccSet());
     };
     window.addEventListener('qso-logged', handler);
     return () => window.removeEventListener('qso-logged', handler);
