@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { logBook, QSO } from '../LogBook';
 import { CloudLogService } from '../services/CloudLogService';
+import { dxccService } from '../services/DxccService';
 
 export function LogBookViewer({ 
     maxEntries, 
@@ -251,7 +252,7 @@ export function LogBookViewer({
                     <div className="text-center text-text-muted mt-8 italic text-[11px]">No QSOs match the current filter.</div>
                 ) : (
                     <div className="w-full">
-                        <div className="sticky top-0 bg-panel text-text-muted text-[10px] uppercase tracking-wider grid grid-cols-[130px_100px_50px_40px_40px_40px_60px_1fr] gap-2 pb-2 mb-1 border-b border-border-subtle z-10 font-bold text-left">
+                        <div className="sticky top-0 bg-panel text-text-muted text-[10px] uppercase tracking-wider grid grid-cols-[130px_100px_50px_40px_40px_40px_60px_120px_1fr] gap-2 pb-2 mb-1 border-b border-border-subtle z-10 font-bold text-left">
                             <div className="text-left">Date/Time (UTC)</div>
                             <div className="text-left">Call</div>
                             <div className="text-left">Band</div>
@@ -259,11 +260,12 @@ export function LogBookViewer({
                             <div className="text-left">Sent</div>
                             <div className="text-left">Rcvd</div>
                             <div className="text-left">Grid</div>
+                            <div className="text-left hidden sm:block">DXCC</div>
                             <div className="text-right pr-2">Action</div>
                         </div>
                         <div className="flex flex-col">
                             {filteredQsos.map(qso => (
-                                <div key={qso.id} className="grid grid-cols-[130px_100px_50px_40px_40px_40px_60px_1fr] gap-2 py-1.5 border-b border-border-subtle/30 hover:bg-btn transition-colors items-center text-[11px] text-left">
+                                <div key={qso.id} className="grid grid-cols-[130px_100px_50px_40px_40px_40px_60px_120px_1fr] gap-2 py-1.5 border-b border-border-subtle/30 hover:bg-btn transition-colors items-center text-[11px] text-left">
                                     <div className="font-mono text-text-muted truncate text-left">{qso.qso_date} {qso.time_on}</div>
                                     <div className="font-bold text-sky-600 dark:text-sky-400 truncate tracking-wide text-left flex items-center gap-1.5 min-w-0">
                                         <span className="truncate">{qso.call}</span>
@@ -281,6 +283,9 @@ export function LogBookViewer({
                                     <div className="text-green-600 dark:text-[#4caf50] font-mono text-left">{qso.rst_sent}</div>
                                     <div className="text-red-650 dark:text-red-450 font-mono text-left">{qso.rst_rcvd}</div>
                                     <div className="text-zinc-600 dark:text-zinc-400 font-mono tracking-wider text-left">{qso.gridsquare || '-'}</div>
+                                    <div className="text-zinc-500 dark:text-zinc-400 text-left text-[10px] hidden sm:block truncate" title={qso.dxcc ? dxccService.getByAdifCode(qso.dxcc)?.name : undefined}>
+                                        {qso.dxcc ? (() => { const e = dxccService.getByAdifCode(qso.dxcc!); return e ? (e.name.length > 14 ? e.name.substring(0, 13) + '…' : e.name) : '-'; })() : '-'}
+                                    </div>
                                     <div className="text-right flex items-center justify-end pr-2 gap-1.5">
                                         {deletingId === qso.id ? (
                                             <div className="flex gap-1">

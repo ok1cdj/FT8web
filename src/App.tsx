@@ -11,6 +11,7 @@ import { VersionInfo } from './components/VersionInfo';
 import { logBook, QSO } from './LogBook';
 import { CloudLogService } from './services/CloudLogService';
 import { LogbookService } from './services/LogbookService';
+import { dxccService } from './services/DxccService';
 
 export interface FT8DecodedMessage {
   time: string;
@@ -239,6 +240,8 @@ export default function App() {
 
   // Keep a Set of callsigns worked before on the current band & mode
   const [workedCallsigns, setWorkedCallsigns] = useState<Set<string>>(new Set());
+  const [dxccReady, setDxccReady] = useState(false);
+  const [workedDxccEntities, setWorkedDxccEntities] = useState<Set<number>>(new Set());
 
   // Helper to determine band from VFO frequency
   const getBandFromFreq = useCallback((freqInHz: number): string => {
@@ -276,6 +279,34 @@ export default function App() {
       window.removeEventListener('qso-logged', handleQsoChange);
     };
   }, [loadWorkedCallsigns]);
+
+  useEffect(() => {
+    dxccService.load().then(async () => {
+      try {
+        const qsos = await logBook.getAllQSOs();
+        for (const qso of qsos) {
+          if (qso.dxcc === undefined) {
+            const entity = dxccService.lookup(qso.call);
+            if (entity) await logBook.updateQSO({ ...qso, dxcc: entity.adifCode });
+          }
+        }
+      } catch (e) {
+        console.warn('[DXCC] Backfill failed:', e);
+      }
+      const worked = await LogbookService.getWorkedDxccEntities();
+      setWorkedDxccEntities(worked);
+      setDxccReady(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!dxccReady) return;
+    const handler = async () => {
+      setWorkedDxccEntities(await LogbookService.getWorkedDxccEntities());
+    };
+    window.addEventListener('qso-logged', handler);
+    return () => window.removeEventListener('qso-logged', handler);
+  }, [dxccReady]);
 
   const [catMode, setCatMode] = useState<'manual'|'kenwood'|'yaesu'|'old-yaesu'|'elecraft'|'qdx'|'icom'>(() => {
     const saved = localStorage.getItem('ft8_catMode') as 'manual'|'kenwood'|'yaesu'|'old-yaesu'|'elecraft'|'qdx'|'icom';
@@ -1265,6 +1296,7 @@ export default function App() {
 
             const currentVfo = vfoFreqRef.current;
 
+            const dxccEntity = dxccService.lookup(qsoData.call);
             const qsoRecord: QSO = {
                 call: qsoData.call,
                 qso_date: dateStr,
@@ -1277,7 +1309,8 @@ export default function App() {
                 rst_rcvd: qsoData.rst_rcvd || "",
                 gridsquare: qsoData.grid || "",
                 timestamp: now.getTime(),
-                synced: false
+                synced: false,
+                dxcc: dxccEntity?.adifCode,
             };
 
             const id = await logBook.logQSO(qsoRecord);
@@ -1719,13 +1752,24 @@ export default function App() {
                       <span className="text-text-main group-hover:text-text-highlight font-bold flex items-center flex-wrap">
                         {log.message}
                         {isWorked && (
-                          <span 
-                            className="ml-1.5 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono font-bold uppercase bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400 border border-neutral-300 dark:border-neutral-700/60 leading-none select-none" 
+                          <span
+                            className="ml-1.5 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono font-bold uppercase bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400 border border-neutral-300 dark:border-neutral-700/60 leading-none select-none"
                             title="Worked before on this band and mode (B4)"
                           >
                             B4
                           </span>
                         )}
+                        {dxccReady && callsign && (() => {
+                          const entity = dxccService.lookup(callsign);
+                          if (!entity) return null;
+                          const isNewDxcc = !workedDxccEntities.has(entity.adifCode);
+                          return <>
+                            {isNewDxcc && (
+                              <span className="ml-1 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono font-bold uppercase bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400 border border-neutral-300 dark:border-neutral-700/60 leading-none select-none" title="New DXCC entity">N</span>
+                            )}
+                            <span className="ml-1 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono uppercase bg-cyan-900/40 text-cyan-400 border border-cyan-700/40 leading-none select-none" title={entity.name}>{entity.primaryPrefix}</span>
+                          </>;
+                        })()}
                       </span>
                     </div>
                   );
@@ -1818,7 +1862,21 @@ export default function App() {
                     <span className="text-zinc-500">{log.time}</span>
                     <span className={log.isTx ? 'text-zinc-500' : (log.snr > -10 ? 'text-green-400' : 'text-red-400')}>{log.isTx ? '--' : log.snr}</span>
                     <span className="text-blue-400">{log.freq}Hz</span>
-                    <span className={`group-hover:text-text-highlight ${textClass}`}>{log.message}</span>
+                    <span className={`group-hover:text-text-highlight ${textClass} flex items-center flex-wrap`}>
+                      {log.message}
+                      {dxccReady && !log.isTx && (() => {
+                        const cs = extractTransmitterCallsign(log.message);
+                        const entity = cs ? dxccService.lookup(cs) : null;
+                        if (!entity) return null;
+                        const isNewDxcc = !workedDxccEntities.has(entity.adifCode);
+                        return <>
+                          {isNewDxcc && (
+                            <span className="ml-1 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono font-bold uppercase bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400 border border-neutral-300 dark:border-neutral-700/60 leading-none select-none" title="New DXCC entity">N</span>
+                          )}
+                          <span className="ml-1 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono uppercase bg-cyan-900/40 text-cyan-400 border border-cyan-700/40 leading-none select-none" title={entity.name}>{entity.primaryPrefix}</span>
+                        </>;
+                      })()}
+                    </span>
                   </div>
                   );
                 })}

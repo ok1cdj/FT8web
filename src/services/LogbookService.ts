@@ -29,4 +29,14 @@ export class LogbookService {
     }
     return workedSet;
   }
+
+  static async getWorkedDxccEntities(): Promise<Set<number>> {
+    try {
+      const qsos = await logBook.getAllQSOs();
+      return new Set(qsos.map(q => q.dxcc).filter((d): d is number => d !== undefined && d > 0));
+    } catch (error) {
+      console.error('[LogbookService] Failed to retrieve worked DXCC entities:', error);
+      return new Set();
+    }
+  }
 }
