@@ -81,6 +81,12 @@ export default class FT8FSM {
         this.isTxEnabled = config.isTxEnabled || false;
     }
 
+    private isNonStandardCompound(call: string): boolean {
+        if (!call.includes('/')) return false;
+        const upper = call.toUpperCase();
+        return !upper.endsWith('/R') && !upper.endsWith('/P');
+    }
+
     private _gridToLatLon(str: string | null) {
         if (!str || str.length < 4) return null;
         str = str.toUpperCase();
@@ -150,7 +156,15 @@ export default class FT8FSM {
                 txString = `CQ ${this.myCall} ${(this.myGrid || '').substring(0, 4)}`;
                 break;
             case 'REPLY_SENDING':
-                txString = `${this.targetCall} ${this.myCall} ${(this.myGrid || '').substring(0, 4)}`.trim();
+                if (this.isNonStandardCompound(this.myCall) || this.isNonStandardCompound(this.targetCall || '')) {
+                    // Compound callsigns exceed the 13-char free-text limit when grid is included;
+                    // skip grid exchange and send the report directly.
+                    txString = `${this.targetCall} ${this.myCall} ${this.targetReport || '-12'}`;
+                    this.currentState = 'SENDING_REPORT';
+                    this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
+                } else {
+                    txString = `${this.targetCall} ${this.myCall} ${(this.myGrid || '').substring(0, 4)}`.trim();
+                }
                 break;
             case 'SENDING_REPORT':
                 const repVal = this.targetReport || '-12';
