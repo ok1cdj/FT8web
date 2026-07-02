@@ -94,7 +94,7 @@ Log your FT8/FT4 QSOs automatically with **Wavelog** or **Cloudlog**:
 | :--- | :---: | :---: |
 | **IC-705** | ✅ | ✅ |
 | **IC-7300** | ✅ | ✅ |
-| **Yaesu FTX-1** | ✅ | In Progress |
+| **Yaesu FTX-1** | ✅ | ✅ |
 | **Yaesu FT-817** | In Progress | In Progress |
 | **Flex 6400** | ✅ | N/A |
 | **Flex 8400** | ✅ | N/A |
