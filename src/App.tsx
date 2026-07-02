@@ -289,7 +289,7 @@ export default function App() {
         const entity = dxccService.lookup(qso.call);
         if (entity) {
           code = entity.adifCode;
-          logBook.updateQSO({ ...qso, dxcc: code }).catch(() => {});
+          await logBook.updateQSO({ ...qso, dxcc: code }).catch(() => {});
         }
       }
       if (code && code > 0) worked.add(code);

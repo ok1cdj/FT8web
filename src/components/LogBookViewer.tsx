@@ -283,8 +283,8 @@ export function LogBookViewer({
                                     <div className="text-green-600 dark:text-[#4caf50] font-mono text-left">{qso.rst_sent}</div>
                                     <div className="text-red-650 dark:text-red-450 font-mono text-left">{qso.rst_rcvd}</div>
                                     <div className="text-zinc-600 dark:text-zinc-400 font-mono tracking-wider text-left">{qso.gridsquare || '-'}</div>
-                                    <div className="text-zinc-500 dark:text-zinc-400 text-left text-[10px] hidden sm:block truncate" title={qso.dxcc ? dxccService.getByAdifCode(qso.dxcc)?.name : undefined}>
-                                        {qso.dxcc ? (() => { const e = dxccService.getByAdifCode(qso.dxcc!); return e ? (e.name.length > 14 ? e.name.substring(0, 13) + '…' : e.name) : '-'; })() : '-'}
+                                    <div className="text-zinc-500 dark:text-zinc-400 text-left text-[10px] hidden sm:block truncate" title={(() => { const e = qso.dxcc ? dxccService.getByAdifCode(qso.dxcc) : dxccService.lookup(qso.call); return e?.name; })()}>
+                                        {(() => { const e = qso.dxcc ? dxccService.getByAdifCode(qso.dxcc) : dxccService.lookup(qso.call); return e ? (e.name.length > 14 ? e.name.substring(0, 13) + '…' : e.name) : '-'; })()}
                                     </div>
                                     <div className="text-right flex items-center justify-end pr-2 gap-1.5">
                                         {deletingId === qso.id ? (
