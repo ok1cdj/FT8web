@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Activity, Settings, X, HelpCircle } from 'lucide-react';
 import { getCaptureWorkletUrl } from './AudioWorkletBlob';
-import { encodeFT8 } from '@e04/ft8ts';
+import { encodeFT8, encodeFT4 } from '@e04/ft8ts';
 import CatManager from './CatManager.js';
 import { UniversalSerialPort } from './UniversalSerialPort';
 import FT8FSM, { QueuedCaller } from './FT8FSM';
@@ -114,7 +114,7 @@ async function checkClock(): Promise<ClockVerdict> {
 }
 
 export default function App() {
-  const BAND_FREQS = [
+  const BAND_FREQS_FT8 = [
     { label: '80m', mhz: '3.5', hz: 3573000 },
     { label: '40m', mhz: '7.0', hz: 7074000 },
     { label: '30m', mhz: '10.1', hz: 10136000 },
@@ -129,10 +129,25 @@ export default function App() {
     { label: '23cm', mhz: '1296.1', hz: 1296174000 }
   ];
 
+  const BAND_FREQS_FT4 = [
+    { label: '80m', mhz: '3.5', hz: 3575000 },
+    { label: '40m', mhz: '7.0', hz: 7047500 },
+    { label: '30m', mhz: '10.1', hz: 10140000 },
+    { label: '20m', mhz: '14.0', hz: 14080000 },
+    { label: '17m', mhz: '18.1', hz: 18104000 },
+    { label: '15m', mhz: '21.1', hz: 21140000 },
+    { label: '12m', mhz: '24.9', hz: 24919000 },
+    { label: '10m', mhz: '28.1', hz: 28180000 },
+    { label: '6m',  mhz: '50.3', hz: 50318000 },
+    { label: '2m',  mhz: '144.1', hz: 144170000 }
+  ];
+
   const [vfoFreq, setVfoFreq] = useState<number>(() => {
     const saved = localStorage.getItem('ft8_vfoFreq');
     return saved ? Number(saved) : 14074000;
   });
+  const [editingVfo, setEditingVfo] = useState(false);
+  const [vfoInputStr, setVfoInputStr] = useState('');
 
   useEffect(() => {
     localStorage.setItem('ft8_vfoFreq', vfoFreq.toString());
@@ -146,6 +161,13 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('ft8_txPeriod', txPeriod.toString());
   }, [txPeriod]);
+
+  const [mode, setMode] = useState<'FT8' | 'FT4'>(() =>
+    (localStorage.getItem('ft8_mode') as 'FT8' | 'FT4') || 'FT8'
+  );
+  useEffect(() => { localStorage.setItem('ft8_mode', mode); }, [mode]);
+
+  const BAND_FREQS = mode === 'FT4' ? BAND_FREQS_FT4 : BAND_FREQS_FT8;
 
   // Global Audio State
   const [audioActive, setAudioActive] = useState(false);
@@ -237,9 +259,9 @@ export default function App() {
 
   const loadWorkedCallsigns = useCallback(async () => {
     const currentBand = getBandFromFreq(vfoFreq);
-    const set = await LogbookService.getWorkedCallsigns(currentBand, "FT8");
+    const set = await LogbookService.getWorkedCallsigns(currentBand, mode);
     setWorkedCallsigns(set);
-  }, [vfoFreq, getBandFromFreq]);
+  }, [vfoFreq, getBandFromFreq, mode]);
 
   useEffect(() => {
     loadWorkedCallsigns();
@@ -255,8 +277,8 @@ export default function App() {
     };
   }, [loadWorkedCallsigns]);
 
-  const [catMode, setCatMode] = useState<'manual'|'kenwood'|'yaesu'|'elecraft'|'qdx'|'icom'>(() => {
-    const saved = localStorage.getItem('ft8_catMode') as 'manual'|'kenwood'|'yaesu'|'elecraft'|'qdx'|'icom';
+  const [catMode, setCatMode] = useState<'manual'|'kenwood'|'yaesu'|'old-yaesu'|'elecraft'|'qdx'|'icom'>(() => {
+    const saved = localStorage.getItem('ft8_catMode') as 'manual'|'kenwood'|'yaesu'|'old-yaesu'|'elecraft'|'qdx'|'icom';
     const isAndroid = /Android/i.test(navigator.userAgent);
     if (isAndroid && saved === 'qdx') {
       return 'manual';
@@ -270,6 +292,10 @@ export default function App() {
   const [icomAddress, setIcomAddress] = useState<string>(() => {
     return localStorage.getItem('ft8_icomAddress') || '94';
   });
+  const [cp2105Channel, setCp2105Channel] = useState<0 | 1>(() => {
+    return (Number(localStorage.getItem('ft8_cp2105Channel')) || 0) as 0 | 1;
+  });
+  const [isDualPort, setIsDualPort] = useState<boolean>(false);
 
   const [maxLogEntries, setMaxLogEntries] = useState<number>(() => {
     const saved = localStorage.getItem('ft8_maxLogEntries');
@@ -349,12 +375,13 @@ export default function App() {
       localStorage.setItem('ft8_catMode', catMode);
       localStorage.setItem('ft8_catBaudRate', catBaudRate.toString());
       localStorage.setItem('ft8_icomAddress', icomAddress);
+      localStorage.setItem('ft8_cp2105Channel', cp2105Channel.toString());
       localStorage.setItem('ft8_maxLogEntries', maxLogEntries.toString());
       localStorage.setItem('ft8_wavelogEnabled', String(wavelogEnabled));
       localStorage.setItem('ft8_wavelogUrl', wavelogUrl);
       localStorage.setItem('ft8_wavelogApiKey', wavelogApiKey);
       localStorage.setItem('ft8_wavelogStationProfileId', wavelogStationProfileId);
-  }, [myCall, myGrid, txFreq, decodeDepth, maxRetries, finalMessageMode, catMode, catBaudRate, icomAddress, maxLogEntries, wavelogEnabled, wavelogUrl, wavelogApiKey, wavelogStationProfileId]);
+  }, [myCall, myGrid, txFreq, decodeDepth, maxRetries, finalMessageMode, catMode, catBaudRate, icomAddress, cp2105Channel, maxLogEntries, wavelogEnabled, wavelogUrl, wavelogApiKey, wavelogStationProfileId]);
 
   // UI State
   const [showSettings, setShowSettings] = useState(false);
@@ -462,12 +489,32 @@ export default function App() {
     };
   }, [serialPort, catMode, catBaudRate, icomAddress]);
 
+  // When the user changes the CP2105 channel while a dual-port device is already
+  // selected, swap to a new wrapper using the same USB device — no picker shown.
+  useEffect(() => {
+    if (!isDualPort || !serialPort || !serialPort.withChannel) return;
+    const newPort = serialPort.withChannel(cp2105Channel);
+    if (catRef.current) {
+      catRef.current.disconnect().catch(() => {});
+      catRef.current = null;
+    }
+    setSerialPort(newPort);
+  }, [cp2105Channel]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const selectBand = (hz: number) => {
     setVfoFreq(hz);
     setRxLog([]);
     setQsoLog([]);
     if (catRef.current && catMode !== 'manual') {
       catRef.current.setFrequency(hz).catch(e => console.error("CAT Set Freq Error:", e));
+    }
+  };
+
+  const commitVfoInput = () => {
+    setEditingVfo(false);
+    const mhz = parseFloat(vfoInputStr.replace(',', '.'));
+    if (!isNaN(mhz) && mhz >= 1 && mhz <= 450) {
+      selectBand(Math.round(mhz * 1_000_000));
     }
   };
 
@@ -486,14 +533,15 @@ export default function App() {
         { usbVendorId: 0x0483, vendorId: 1155 }   // STMicroelectronics (QDX)
       ];
 
-      const port = await UniversalSerialPort.requestPort({ filters: serialFilters });
-      
+      const port = await UniversalSerialPort.requestPort({ filters: serialFilters, channelIndex: cp2105Channel });
+
       // Cleanly disconnect old port before switching to a new selected port
       if (catRef.current) {
         await catRef.current.disconnect().catch(() => {});
         catRef.current = null;
       }
 
+      setIsDualPort(port.isDualPort ?? false);
       setSerialPort(port);
       setCatTestResult("Port selected successfully. Ready to test.");
     } catch (e: any) {
@@ -528,6 +576,7 @@ export default function App() {
   const [rxLog, setRxLog] = useState<FT8DecodedMessage[]>([]);
   const [qsoLog, setQsoLog] = useState<FT8DecodedMessage[]>([]);
   const [isTransmitting, setIsTransmitting] = useState(false);
+  const isTransmittingRef = useRef(false);
   const [isTxQueued, setIsTxQueued] = useState(false);
   
   // TX Controls State
@@ -540,7 +589,7 @@ export default function App() {
     return saved !== null ? saved === 'true' : true;
   });
   const [fsmState, setFsmState] = useState<string>('IDLE');
-  const [fsmQueueLength, setFsmQueueLength] = useState<number>(0);
+  const [fsmQueue, setFsmQueue] = useState<QueuedCaller[]>([]);
   const fsmRef = useRef<FT8FSM | null>(null);
 
   useEffect(() => {
@@ -598,6 +647,11 @@ export default function App() {
   useEffect(() => {
     txPeriodRef.current = txPeriod;
   }, [txPeriod]);
+
+  const modeRef = useRef<'FT8' | 'FT4'>(mode);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
+
+  useEffect(() => { isTransmittingRef.current = isTransmitting; }, [isTransmitting]);
 
   useEffect(() => {
     autoSequenceRef.current = autoSequence;
@@ -671,11 +725,9 @@ export default function App() {
         }
         
         try {
-            // Generate the FT8 waveform for 15 seconds
-            const audioData = encodeFT8(message, { 
-              sampleRate: ctx.sampleRate,
-              baseFrequency: audioFreq 
-            });
+            const audioData = modeRef.current === 'FT4'
+              ? encodeFT4(message, { sampleRate: ctx.sampleRate, baseFrequency: audioFreq })
+              : encodeFT8(message, { sampleRate: ctx.sampleRate, baseFrequency: audioFreq });
             
             const audioBuffer = ctx.createBuffer(1, audioData.length, ctx.sampleRate);
             audioBuffer.copyToChannel(audioData, 0);
@@ -746,7 +798,8 @@ export default function App() {
   const rxBufferRef = useRef<Float32Array>(new Float32Array(0));
   const workerRef = useRef<Worker | null>(null);
   const lastDrawTimeRef = useRef<number>(0);
-  const lastPeriodRef = useRef<number>(-1);
+  const waterfallRowsRef = useRef<number>(0);
+  const pendingMarkersRef = useRef<{ atRow: number; label: string }[]>([]);
 
   const getDevices = async () => {
     try {
@@ -785,7 +838,9 @@ export default function App() {
         }
         
         const payload = e.data.payload || [];
-        const decPeriodIndex = Math.floor(new Date().getUTCSeconds() / 15) % 2;
+        const _now = new Date();
+        const _totalSec = _now.getUTCSeconds() + _now.getUTCMilliseconds() / 1000;
+        const decPeriodIndex = Math.floor(_totalSec / (modeRef.current === 'FT4' ? 7.5 : 15)) % 2;
 
         if (payload.length > 0) {
             setRxLog(prev => {
@@ -863,7 +918,7 @@ export default function App() {
 
   const drawWaterfall = useCallback((time: number) => {
     // TX Freeze Logic: completely freeze waterfall if Transmitting
-    if (isTransmitting) return;
+    if (isTransmittingRef.current) return;
 
     // Throttle to 100ms (10fps). 1 pixel per frame = 10 px / sec.
     if (time - lastDrawTimeRef.current < 100) return;
@@ -927,23 +982,28 @@ export default function App() {
     
     ctx.putImageData(rowImg, 0, 0);
 
-    // Period Markers (15s boundaries)
-    const currentDate = new Date();
-    const seconds = currentDate.getUTCSeconds();
-    
-    if (seconds % 15 === 0 && lastPeriodRef.current !== seconds) {
-      lastPeriodRef.current = seconds;
-      
-      // Draw divider line
-      ctx.fillStyle = 'rgba(255, 215, 0, 0.4)'; // Semi-transparent gold
-      ctx.fillRect(0, 0, width, 1);
-      
-      // Target text cleanly below the line (at Y=12)
-      ctx.fillStyle = 'rgba(255, 215, 0, 0.9)';
-      ctx.font = '10px "JetBrains Mono", monospace';
-      ctx.fillText(currentDate.toISOString().substring(11, 19) + ' UTC', 4, 12);
+    // Advance the row counter (naturally pauses during TX since drawWaterfall returns early)
+    waterfallRowsRef.current += 1;
+    const totalRows = waterfallRowsRef.current;
+
+    // Prune markers that have scrolled off the bottom of the canvas
+    pendingMarkersRef.current = pendingMarkersRef.current.filter(
+      m => totalRows - m.atRow < height
+    );
+
+    // Draw each queued period marker at its correct canvas Y position
+    for (const marker of pendingMarkersRef.current) {
+      const y = totalRows - marker.atRow;
+      ctx.fillStyle = 'rgba(255, 215, 0, 0.4)';
+      ctx.fillRect(0, y, width, 1);
+      // Draw the timestamp label once, just below the line, when it first enters the canvas
+      if (y <= 1) {
+        ctx.fillStyle = 'rgba(255, 215, 0, 0.9)';
+        ctx.font = '10px "JetBrains Mono", monospace';
+        ctx.fillText(marker.label, 4, y + 12);
+      }
     }
-  }, [isTransmitting]);
+  }, [mode]);
 
   const toggleAudio = async (forcedDeviceId?: string) => {
     const targetDeviceId = typeof forcedDeviceId === 'string' ? forcedDeviceId : selectedDeviceId;
@@ -1153,7 +1213,7 @@ export default function App() {
 
       fsm.onStateChange = (state, target, queue) => {
         setFsmState(state);
-        setFsmQueueLength(queue.length);
+        setFsmQueue([...queue]);
         setTargetCall(target || '');
       };
 
@@ -1211,7 +1271,7 @@ export default function App() {
                 time_on: timeStr,
                 band: getBandFromFreq(currentVfo),
                 freq: currentVfo / 1e6,
-                mode: "FT8",
+                mode: modeRef.current,
                 submode: "",
                 rst_sent: qsoData.rst_sent || "",
                 rst_rcvd: qsoData.rst_rcvd || "",
@@ -1294,30 +1354,39 @@ export default function App() {
       const ms = now.getUTCMilliseconds();
       const totalSeconds = seconds + (ms / 1000);
       
-      const currentPeriod = Math.floor(seconds / 15);
-      const secondsInWindow = totalSeconds % 15;
-      
-      setWindowProgress((secondsInWindow / 15) * 100);
+      const PERIOD = modeRef.current === 'FT4' ? 7.5 : 15;
+      const RECORD_AT = modeRef.current === 'FT4' ? 6.0 : 13.0;
+
+      const currentPeriod = Math.floor(totalSeconds / PERIOD);
+      const secondsInWindow = totalSeconds % PERIOD;
+
+      setWindowProgress((secondsInWindow / PERIOD) * 100);
       setUtcTime(now.toISOString().substring(11, 19));
-      
-      // Epoch boundary: 0.0s mark
+
+      // Epoch boundary: period start mark
       if (currentPeriod !== periodState.lastPeriod && periodState.lastPeriod !== -1) {
         periodState.lastPeriod = currentPeriod;
         periodState.decodedThisPeriod = false;
 
+        // Queue a waterfall period marker at the current canvas row
+        pendingMarkersRef.current.push({
+          atRow: waterfallRowsRef.current,
+          label: now.toISOString().substring(11, 19) + ' UTC',
+        });
+
         // Drive FSM at slot transition
         if (autoSequence && fsmRef.current) {
-          fsmRef.current.onPeriodStart(seconds);
+          fsmRef.current.onPeriodStart(currentPeriod);
         }
-        
-        // Start TX exactly at 0.0s if queued and matches selected period
+
+        // Start TX exactly at period start if queued and matches selected period
         if (queuedTxMessageRef.current && txEnabled && currentPeriod % 2 === txPeriodRef.current) {
             const message = queuedTxMessageRef.current;
             queuedTxMessageRef.current = null;
             setIsTxQueued(false);
             startTx(message);
         }
-        
+
         // Clear RX buffer for the new recording period
         rxBufferRef.current = new Float32Array(0);
       } else if (currentPeriod !== periodState.lastPeriod) {
@@ -1325,23 +1394,26 @@ export default function App() {
         periodState.lastPeriod = currentPeriod;
       }
 
-      // 13.0s mark trigger to Decode
-      if (secondsInWindow >= 13.0 && !periodState.decodedThisPeriod) {
+      // Decode trigger
+      if (secondsInWindow >= RECORD_AT && !periodState.decodedThisPeriod) {
         periodState.decodedThisPeriod = true;
         const audioData = rxBufferRef.current;
-        
+
         if (audioActive && audioCtxRef.current && audioData.length > 0) {
             if (workerRef.current) {
-                const periodStartSeconds = Math.floor(now.getUTCSeconds() / 15) * 15;
+                const periodStartTotalSec = Math.floor(totalSeconds / PERIOD) * PERIOD;
+                const periodStartWholeSec = Math.floor(periodStartTotalSec);
+                const periodStartMs = Math.round((periodStartTotalSec - periodStartWholeSec) * 1000);
                 const periodStart = new Date(now.getTime());
-                periodStart.setUTCSeconds(periodStartSeconds, 0);
+                periodStart.setUTCSeconds(periodStartWholeSec, periodStartMs);
                 const nowString = periodStart.toISOString().substring(11, 19).replace(/:/g, '');
-                
+
                 workerRef.current.postMessage({
                     audioData,
                     sampleRate: audioCtxRef.current.sampleRate,
                     nowString,
-                    decodeDepth
+                    decodeDepth,
+                    mode: modeRef.current
                 });
             }
         }
@@ -1422,17 +1494,39 @@ export default function App() {
         {/* --- RF Frequency Readout --- */}
         <div className="flex flex-col items-center justify-center min-w-[180px]">
           <span className="text-[10px] uppercase tracking-widest text-text-muted mb-1">Radio VFO</span>
-          <span className={`text-[26px] font-mono font-bold leading-none tracking-tight ${
-            catMode !== 'manual' && !catConnected 
-              ? 'text-red-500 shadow-[0_0_8px_rgba(239,68,68,0.3)]' 
-              : 'text-green-600 dark:text-[#4caf50]'
-          }`}>
-            {formatFrequency(vfoFreq)}
-          </span>
+          {editingVfo ? (
+            <input
+              type="text"
+              className="text-[26px] font-mono font-bold leading-none tracking-tight text-green-600 dark:text-[#4caf50] bg-transparent border-b border-[#4caf50] outline-none w-[180px] text-center"
+              value={vfoInputStr}
+              autoFocus
+              onChange={e => setVfoInputStr(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') commitVfoInput();
+                if (e.key === 'Escape') setEditingVfo(false);
+              }}
+              onBlur={commitVfoInput}
+            />
+          ) : (
+            <span
+              className={`text-[26px] font-mono font-bold leading-none tracking-tight cursor-pointer hover:opacity-70 transition-opacity ${
+                catMode !== 'manual' && !catConnected
+                  ? 'text-red-500 shadow-[0_0_8px_rgba(239,68,68,0.3)]'
+                  : 'text-green-600 dark:text-[#4caf50]'
+              }`}
+              title="Click to enter custom frequency (MHz)"
+              onClick={() => {
+                setVfoInputStr((vfoFreq / 1_000_000).toFixed(6));
+                setEditingVfo(true);
+              }}
+            >
+              {formatFrequency(vfoFreq)}
+            </span>
+          )}
         </div>
 
         <div className="flex flex-col items-center">
-          <span className="text-[10px] uppercase tracking-widest text-text-muted mb-1">FT8 Window (15s Sync)</span>
+          <span className="text-[10px] uppercase tracking-widest text-text-muted mb-1">{mode} Window ({mode === 'FT4' ? '7.5s' : '15s'} Sync)</span>
           <div className="w-32 md:w-48 h-1.5 bg-black rounded-full border border-border-subtle relative overflow-hidden">
              <div 
               className="absolute left-0 top-0 h-full bg-green-600 dark:bg-[#4caf50] transition-all duration-75 ease-linear shadow-[0_0_5px_rgba(76,175,80,0.5)]"
@@ -1492,16 +1586,35 @@ export default function App() {
           })}
         </div>
         
+        {/* Mode Toggle */}
+        <button
+          onClick={() => {
+            const newMode = mode === 'FT8' ? 'FT4' : 'FT8';
+            const freqs = newMode === 'FT4' ? BAND_FREQS_FT4 : BAND_FREQS_FT8;
+            const currentBand = getBandFromFreq(vfoFreq);
+            const match = freqs.find(b => b.label === currentBand);
+            setMode(newMode);
+            if (match) selectBand(match.hz);
+          }}
+          className={`shrink-0 px-4 py-1.5 rounded text-[11px] font-mono uppercase font-bold border transition-colors ${
+            mode === 'FT8'
+              ? 'bg-[#0f1e30] text-blue-400 border-blue-800 hover:bg-[#162540]'
+              : 'bg-[#2a1505] text-orange-400 border-orange-800 hover:bg-[#3d2007]'
+          }`}
+        >
+          {mode}
+        </button>
+
         {/* PTT Period Toggle */}
         <button
           onClick={() => setTxPeriod(p => p === 0 ? 1 : 0)}
           className={`shrink-0 px-4 py-1.5 rounded text-[11px] font-mono uppercase font-bold border transition-colors ${
-            txPeriod === 0 
-              ? 'bg-[#0f2e1b] text-green-400 border-green-800 hover:bg-[#154628]' 
+            txPeriod === 0
+              ? 'bg-[#0f2e1b] text-green-400 border-green-800 hover:bg-[#154628]'
               : 'bg-[#3d1f05] text-amber-500 border-amber-700 hover:bg-[#5a2e07]'
           }`}
         >
-          Tx: {txPeriod === 0 ? 'Even (:00)' : 'Odd (:15)'}
+          Tx: {txPeriod === 0 ? 'Even (:00)' : `Odd (${mode === 'FT4' ? ':07' : ':15'})`}
         </button>
       </div>
 
@@ -1708,12 +1821,12 @@ export default function App() {
                className="w-full h-full block cursor-crosshair"
                onClick={handleWaterfallClick}
             />
-            {/* TX Frequency Overlay Bar (50 Hz wide) */}
-            <div 
+            {/* TX Frequency Overlay Bar (50 Hz for FT8, 83 Hz for FT4) */}
+            <div
                className="absolute top-0 bottom-0 bg-red-500/35 border-x border-red-500/50 pointer-events-none transition-all duration-75"
-               style={{ 
-                 left: `${((txFreq - 200) / 2800) * 100}%`, 
-                 width: `${(50 / 2800) * 100}%`,
+               style={{
+                 left: `${((txFreq - 200) / 2800) * 100}%`,
+                 width: `${((mode === 'FT4' ? 83.33 : 50) / 2800) * 100}%`,
                  transform: 'translateX(-50%)'
                }}
             />
@@ -1812,10 +1925,19 @@ export default function App() {
                  <span className="text-[10px] font-mono uppercase bg-black/40 px-2 py-0.5 rounded text-sky-400 font-bold tracking-wider">
                    {autoSequence ? fsmState : "OFF"}
                  </span>
-                 {autoSequence && fsmQueueLength > 0 && (
-                   <span className="text-[8px] text-zinc-500 font-mono">Q: {fsmQueueLength} pending</span>
-                 )}
               </button>
+              {autoSequence && fsmQueue.length > 0 && (
+                <div className="w-full lg:w-32 mt-1 max-h-[72px] overflow-y-auto flex flex-col gap-0.5 custom-scrollbar">
+                  {fsmQueue.map(c => (
+                    <div key={c.callsign} className="flex items-center justify-between px-1.5 py-0.5 rounded bg-black/30 border border-border-subtle/40">
+                      <span className="text-[9px] font-mono font-bold text-sky-400 tracking-wide">{c.callsign}</span>
+                      <span className="text-[9px] font-mono text-zinc-400">
+                        {c.report ?? '?'}{c.distance ? ` ${c.distance}km` : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Enable TX PTT Trigger */}
@@ -1937,12 +2059,13 @@ export default function App() {
                 <label className="text-[10px] uppercase tracking-widest text-text-muted">Protocol Mode</label>
                 <select 
                   value={catMode}
-                  onChange={e => setCatMode(e.target.value as 'manual' | 'kenwood' | 'yaesu' | 'elecraft' | 'qdx' | 'icom')}
+                  onChange={e => setCatMode(e.target.value as 'manual' | 'kenwood' | 'yaesu' | 'old-yaesu' | 'elecraft' | 'qdx' | 'icom')}
                   className="bg-app border border-border-input text-text-main rounded px-3 py-2 text-xs font-mono w-full focus:outline-none focus:border-[#4caf50]"
                 >
                   <option value="manual">Manual (No CAT / iOS)</option>
                   <option value="kenwood">Kenwood</option>
                   <option value="yaesu">Yaesu (FT-710, FTDX10, FT-991A, FT-891)</option>
+                  <option value="old-yaesu">Yaesu Old Binary (FT-817, FT-857, FT-897)</option>
                   <option value="elecraft">Elecraft (K3, KX3, KX2, etc.)</option>
                   {/Android/i.test(navigator.userAgent) ? (
                     <option value="qdx" disabled className="text-gray-400">QDX (Unsupported on Android)</option>
@@ -1987,10 +2110,24 @@ export default function App() {
                 </div>
               )}
 
+              {isDualPort && /Android/i.test(navigator.userAgent) && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] uppercase tracking-widest text-text-muted">CP2105 Channel</label>
+                  <select
+                    value={cp2105Channel}
+                    onChange={e => setCp2105Channel(Number(e.target.value) as 0 | 1)}
+                    className="bg-app border border-border-input text-text-main rounded px-3 py-2 text-xs font-mono w-full focus:outline-none focus:border-[#4caf50]"
+                  >
+                    <option value={0}>Port A — Enhanced (Interface 0)</option>
+                    <option value={1}>Port B — Standard (Interface 1)</option>
+                  </select>
+                </div>
+              )}
+
               {catMode !== 'manual' && (
                 <div className="flex flex-col gap-2 pt-2">
                   <div className="flex gap-2">
-                    <button 
+                    <button
                       onClick={handleSelectSerialPort}
                       className="flex-1 bg-app border border-border-input text-text-main hover:bg-[#4caf50] hover:text-white hover:border-[#4caf50] rounded px-3 py-2 text-xs font-mono font-bold transition-colors"
                     >

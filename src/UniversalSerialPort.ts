@@ -8,6 +8,8 @@ export interface UniversalSerialPortInstance {
   open(options: SerialOptions): Promise<void>;
   close(): Promise<void>;
   setSignals?(signals: { requestToSend?: boolean, dataTerminalReady?: boolean }): Promise<void>;
+  isDualPort?: boolean;
+  withChannel?(channelIndex: number): UniversalSerialPortInstance;
 }
 
 // -------------------------------------------------------------
@@ -40,13 +42,23 @@ class NativeSerialPortWrapper implements UniversalSerialPortInstance {
 class AndroidWebUsbPortWrapper implements UniversalSerialPortInstance {
   public readable: ReadableStream<Uint8Array> | null = null;
   public writable: WritableStream<Uint8Array> | null = null;
-  
+  public readonly isDualPort: boolean;
+
   private endpointIn: number = 0;
   private endpointOut: number = 0;
   private isReading: boolean = false;
   private interfaceNumber: number = 0;
 
-  constructor(private device: any) {}
+  constructor(private device: any, private channelIndex: number = 0) {
+    // CP2105 dual-port bridge (PID 0xEA70) exposes two independent UART interfaces.
+    // Single-port CP210x variants (CP2102/CP2104, PID 0xEA60) are unaffected.
+    this.isDualPort = device.vendorId === 0x10C4 && device.productId === 0xEA70;
+  }
+
+  withChannel(channelIndex: number): UniversalSerialPortInstance {
+    // Reuse the same USB device — no picker shown again.
+    return new AndroidWebUsbPortWrapper(this.device, channelIndex);
+  }
 
   async open(options: SerialOptions) {
     await this.device.open();
@@ -59,6 +71,10 @@ class AndroidWebUsbPortWrapper implements UniversalSerialPortInstance {
     if (!conf) throw new Error("No USB configuration found");
     
     for (const iface of conf.interfaces) {
+      // For CP2105 dual-port: interface 0 = Enhanced (Port A), interface 1 = Standard (Port B).
+      // Skip interfaces that don't match the requested channel; single-port chips use first found.
+      if (this.isDualPort && iface.interfaceNumber !== this.channelIndex) continue;
+
       const alt = iface.alternates[0];
       let epIn, epOut;
       for (const ep of alt.endpoints) {
@@ -258,23 +274,23 @@ class AndroidWebUsbPortWrapper implements UniversalSerialPortInstance {
 
 
 export class UniversalSerialPort {
-  static async requestPort(options: { filters: any[] }): Promise<UniversalSerialPortInstance> {
+  static async requestPort(options: { filters: any[], channelIndex?: number }): Promise<UniversalSerialPortInstance> {
     const isAndroid = /Android/i.test(navigator.userAgent);
-    
+
     if (!isAndroid && (navigator as any).serial) {
       // For PC/desktop platform (Native Web Serial), we do not pass filters to let the browser prompt with all available ports.
       const port = await (navigator as any).serial.requestPort();
       return new NativeSerialPortWrapper(port);
     }
-    
+
     if ((navigator as any).usb) {
       const usbFilters = options.filters.map(f => ({
         vendorId: f.vendorId || f.usbVendorId
       }));
       const device = await (navigator as any).usb.requestDevice({ filters: usbFilters });
-      return new AndroidWebUsbPortWrapper(device);
+      return new AndroidWebUsbPortWrapper(device, options.channelIndex ?? 0);
     }
-    
+
     throw new Error('No Native Serial or WebUSB API available');
   }
 }

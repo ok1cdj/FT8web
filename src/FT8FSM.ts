@@ -27,6 +27,7 @@ export interface QueuedCaller {
     grid: string | null;
     distance: number;
     report?: string | null;
+    receivedSnr?: number;
 }
 
 export interface QSOData {
@@ -128,13 +129,15 @@ export default class FT8FSM {
     }
 
     /**
-     * Triggered externally at exactly :00, :15, :30, :45 of every minute UTC.
+     * Triggered externally at every period boundary. currentPeriod is the
+     * absolute period index (0, 1, 2, …) computed by the timing loop using
+     * the correct period length for the active mode (15 s for FT8, 7.5 s for FT4).
      */
-    public onPeriodStart(currentUtcSecond: number) {
+    public onPeriodStart(currentPeriod: number) {
         if (!this.isTxEnabled) return;
 
         // Check if we are allowed to TX in the current slot
-        const periodIndex = Math.floor(currentUtcSecond / 15) % 2;
+        const periodIndex = currentPeriod % 2;
         if (periodIndex !== this.myPeriod) return;
 
         let txString: string | null = null;
@@ -195,9 +198,13 @@ export default class FT8FSM {
                      this.targetCall = next.callsign;
                      this.targetGrid = next.grid;
                      this.myReceivedReport = next.report || null;
-                     const randomSnr = Math.floor(Math.random() * 15) - 20;
-                     this.targetReport = String(randomSnr);
-                     this.currentState = 'SENDING_REPORT';
+                     const snr = next.receivedSnr ?? (Math.floor(Math.random() * 15) - 20);
+                     const formattedSnr = snr >= 0
+                         ? `+${String(snr).padStart(2, '0')}`
+                         : `-${String(Math.abs(snr)).padStart(2, '0')}`;
+                     this.targetReport = formattedSnr;
+                     // If caller already sent us a report, skip grid exchange and go straight to R-report
+                     this.currentState = next.report != null ? 'SENDING_R_REPORT' : 'SENDING_REPORT';
                      this.retryCount = 0;
                      this.hasTransmittedThisQso = false;
                      this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
@@ -275,7 +282,23 @@ export default class FT8FSM {
                                         rst_rcvd: this.myReceivedReport
                                     });
                                 }
-                                this.resetToIdle();
+                                if (this.callerQueue.length > 0) {
+                                    const next = this.callerQueue.shift()!;
+                                    this.targetCall = next.callsign;
+                                    this.targetGrid = next.grid;
+                                    this.myReceivedReport = next.report || null;
+                                    const snr = next.receivedSnr ?? -12;
+                                    const formattedSnr = snr >= 0
+                                        ? `+${String(snr).padStart(2, '0')}`
+                                        : `-${String(Math.abs(snr)).padStart(2, '0')}`;
+                                    this.targetReport = formattedSnr;
+                                    this.currentState = next.report != null ? 'SENDING_R_REPORT' : 'SENDING_REPORT';
+                                    this.retryCount = 0;
+                                    this.hasTransmittedThisQso = false;
+                                    this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
+                                } else {
+                                    this.resetToIdle();
+                                }
                             }
                         }
                         // 2. Check if they sent a signal report (e.g. -12, +04, R-12, R+04)
@@ -322,42 +345,63 @@ export default class FT8FSM {
                             }
                         }
                     } 
-                    else if (this.currentState === 'IDLE' || this.currentState === 'CQ_SENDING') {
+                    else if (
+                        this.currentState === 'IDLE' ||
+                        this.currentState === 'CQ_SENDING' ||
+                        this.currentState === 'SENDING_RRR' ||
+                        this.currentState === 'SENDING_RR73' ||
+                        this.currentState === 'SENDING_73'
+                    ) {
                         const upperContent = msgContent.toUpperCase();
                         const gridMatch = upperContent.match(/^[A-Z]{2}[0-9]{2}/);
                         const grid = (gridMatch && gridMatch[0] !== 'RR73') ? gridMatch[0] : null;
                         const distance = this.calculateDistance(this.myGrid, grid);
                         const reportMatch = upperContent.match(/R?([+-]\d+)/);
                         const report = reportMatch ? reportMatch[1] : null;
-                        incomingCallers.push({ callsign: sender, grid, distance, report });
+                        const receivedSnr = msgObj.snr !== undefined ? Math.round(msgObj.snr) : undefined;
+                        incomingCallers.push({ callsign: sender, grid, distance, report, receivedSnr });
                     }
                 }
             }
         });
 
         // 2. Queueing & Pile-up Handling
+        const isLateQso = this.currentState === 'SENDING_RRR'
+            || this.currentState === 'SENDING_RR73'
+            || this.currentState === 'SENDING_73';
+
+        // During late-QSO states: queue callers but never switch immediately —
+        // the existing QSO must finish first via completeQso or the has73 path.
+        if (isLateQso && incomingCallers.length > 0) {
+            incomingCallers.forEach(c => {
+                if (!this.callerQueue.find(q => q.callsign === c.callsign)) {
+                    this.callerQueue.push(c);
+                }
+            });
+            this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
+        }
+
         if ((this.currentState === 'IDLE' || this.currentState === 'CQ_SENDING') && incomingCallers.length > 0) {
             incomingCallers.forEach(c => {
                  if (!this.callerQueue.find(q => q.callsign === c.callsign)) {
                      this.callerQueue.push(c);
                  }
             });
-            
+
             this.callerQueue.sort((a, b) => b.distance - a.distance);
-            
+
             const topCaller = this.callerQueue.shift()!;
             this.targetCall = topCaller.callsign;
             this.targetGrid = topCaller.grid;
             this.myReceivedReport = topCaller.report || null;
-            
-            const matchedMsg = decodedMessagesArray.find(m => m.message.includes(topCaller.callsign));
-            const actualSnr = matchedMsg && matchedMsg.snr !== undefined ? Math.round(matchedMsg.snr) : -12;
-            const formattedSnr = actualSnr >= 0 
-                ? `+${String(actualSnr).padStart(2, '0')}` 
-                : `-${String(Math.abs(actualSnr)).padStart(2, '0')}`;
+
+            const snr = topCaller.receivedSnr ?? -12;
+            const formattedSnr = snr >= 0
+                ? `+${String(snr).padStart(2, '0')}`
+                : `-${String(Math.abs(snr)).padStart(2, '0')}`;
             this.targetReport = formattedSnr;
 
-            this.currentState = 'SENDING_REPORT'; 
+            this.currentState = 'SENDING_REPORT';
             this.retryCount = 0;
             this.hasTransmittedThisQso = false;
             this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
