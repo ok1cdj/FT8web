@@ -280,28 +280,37 @@ export default function App() {
     };
   }, [loadWorkedCallsigns]);
 
-  const buildWorkedDxccSet = async (): Promise<Set<number>> => {
+  const backfillDxcc = async (): Promise<void> => {
+    const qsos = await logBook.getAllQSOs();
+    for (const qso of qsos) {
+      if (qso.dxcc === undefined) {
+        const entity = dxccService.lookup(qso.call);
+        if (entity) await logBook.updateQSO({ ...qso, dxcc: entity.adifCode }).catch(() => {});
+      }
+    }
+  };
+
+  const loadWorkedDxccEntities = useCallback(async () => {
+    if (!dxccService.loaded) return;
+    const currentBand = getBandFromFreq(vfoFreq);
     const qsos = await logBook.getAllQSOs();
     const worked = new Set<number>();
     for (const qso of qsos) {
-      let code = qso.dxcc;
-      if (code === undefined) {
-        const entity = dxccService.lookup(qso.call);
-        if (entity) {
-          code = entity.adifCode;
-          await logBook.updateQSO({ ...qso, dxcc: code }).catch(() => {});
-        }
-      }
+      const qsoBand = (qso.band || '').trim().toUpperCase();
+      const qsoMode = (qso.mode || '').trim().toUpperCase();
+      if (qsoBand !== currentBand.toUpperCase() || qsoMode !== mode.toUpperCase()) continue;
+      const code = qso.dxcc ?? dxccService.lookup(qso.call)?.adifCode;
       if (code && code > 0) worked.add(code);
     }
-    return worked;
-  };
+    setWorkedDxccEntities(worked);
+  }, [vfoFreq, getBandFromFreq, mode]);
 
   useEffect(() => {
     dxccService.load().then(async () => {
       if (!dxccService.loaded) { setDxccReady(true); return; }
       try {
-        setWorkedDxccEntities(await buildWorkedDxccSet());
+        await backfillDxcc();
+        await loadWorkedDxccEntities();
       } catch (e) {
         console.warn('[DXCC] Init failed:', e);
       }
@@ -311,12 +320,14 @@ export default function App() {
 
   useEffect(() => {
     if (!dxccReady) return;
-    const handler = async () => {
-      setWorkedDxccEntities(await buildWorkedDxccSet());
-    };
-    window.addEventListener('qso-logged', handler);
-    return () => window.removeEventListener('qso-logged', handler);
-  }, [dxccReady]);
+    loadWorkedDxccEntities();
+  }, [loadWorkedDxccEntities, dxccReady]);
+
+  useEffect(() => {
+    if (!dxccReady) return;
+    window.addEventListener('qso-logged', loadWorkedDxccEntities);
+    return () => window.removeEventListener('qso-logged', loadWorkedDxccEntities);
+  }, [loadWorkedDxccEntities, dxccReady]);
 
   const [catMode, setCatMode] = useState<'manual'|'kenwood'|'yaesu'|'old-yaesu'|'elecraft'|'qdx'|'icom'>(() => {
     const saved = localStorage.getItem('ft8_catMode') as 'manual'|'kenwood'|'yaesu'|'old-yaesu'|'elecraft'|'qdx'|'icom';
