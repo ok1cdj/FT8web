@@ -20,6 +20,7 @@ class DxccService {
             const res = await fetch(url);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             this.parseCtyDat(await res.text());
+            this.cache.clear();
             this.loaded = true;
         } catch (e) {
             console.warn('[DxccService] Failed to load cty.dat:', e);
