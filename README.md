@@ -5,9 +5,10 @@
 **Report Issues:** [GitHub Issues / Help](https://github.com/ok1cdj/FT8web)  
 **Support the Project:** [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Become%20a%20Supporter-FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/ok1cdj)
 
-A production-ready Amateur Radio FT8/FT4 client running entirely in the browser using the Web Audio API, an integrated FSM for automated contacts, and the `@e04/ft8ts` DSP library.
+A production-ready Amateur Radio FT8/FT4 client running entirely in the browser using the Web Audio API, an integrated FSM for automated contacts, and the `@e04/ft8ts` DSP library. Installable as a **Progressive Web App (PWA)** — works fully offline after the first load.
 
 ## Features
+- **Progressive Web App (PWA):** Install directly from the browser on desktop or mobile. All assets are cached on first load so the app runs fully offline — no internet connection required for decoding or transmitting.
 - **FT8 & FT4 Modes:** Switch between FT8 (15s T/R cycles) and FT4 (7.5s T/R cycles) with a single button. Band dial frequencies, timing windows, decode triggers, and TX encoding all switch automatically. Mode is persisted across sessions.
 - **In-Browser Decoding/Encoding:** Uses a Web Worker to decode FT8/FT4 audio streams in the background without blocking the UI.
 - **Automated QSO State Machine:** Incorporates a robust Finite State Machine (FSM) to automatically manage the flow of your digital contacts (CQ, Grid, SNR Report, 73) and handle DX pile-up caller distance priority sorting.
