@@ -1791,9 +1791,7 @@ export default function App() {
                           if (!entity) return null;
                           const isNewDxcc = !workedDxccEntities.has(entity.adifCode);
                           return <>
-                            {isNewDxcc && (
-                              <span className="ml-1 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono font-bold uppercase bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400 border border-neutral-300 dark:border-neutral-700/60 leading-none select-none" title="New DXCC entity">N</span>
-                            )}
+                            <span className="ml-1 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono font-bold uppercase bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400 border border-neutral-300 dark:border-neutral-700/60 leading-none select-none" title={isNewDxcc ? "New DXCC entity" : "Worked DXCC entity"}>{isNewDxcc ? 'N' : 'W'}</span>
                             <span className="ml-1 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono uppercase bg-cyan-900/40 text-cyan-400 border border-cyan-700/40 leading-none select-none" title={entity.name}>{entity.primaryPrefix}</span>
                           </>;
                         })()}
@@ -1903,9 +1901,7 @@ export default function App() {
                         if (!entity) return null;
                         const isNewDxcc = !workedDxccEntities.has(entity.adifCode);
                         return <>
-                          {isNewDxcc && (
-                            <span className="ml-1 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono font-bold uppercase bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400 border border-neutral-300 dark:border-neutral-700/60 leading-none select-none" title="New DXCC entity">N</span>
-                          )}
+                          <span className="ml-1 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono font-bold uppercase bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400 border border-neutral-300 dark:border-neutral-700/60 leading-none select-none" title={isNewDxcc ? "New DXCC entity" : "Worked DXCC entity"}>{isNewDxcc ? 'N' : 'W'}</span>
                           <span className="ml-1 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono uppercase bg-cyan-900/40 text-cyan-400 border border-cyan-700/40 leading-none select-none" title={entity.name}>{entity.primaryPrefix}</span>
                         </>;
                       })()}
