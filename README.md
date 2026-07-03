@@ -85,10 +85,15 @@ Log your FT8/FT4 QSOs automatically with **Wavelog** or **Cloudlog**:
 - **Audio Pipeline:** `AudioWorkletNode` (`AudioWorkletBlob.ts`) for raw sample accumulation (avoiding main thread drops).
 
 ## 🗺️ Roadmap / Upcoming Features
-- [ ] Intensive testing with more radios
+
 - [x] FT4 Mode support (7.5s T/R cycles via `@e04/ft8ts` mode switching)
 - [x] DXCC entity lookup and N/W status indicators per band and mode
-- [ ] Built-in better logbook
+- [ ] DXCC check: ignore mode (band-only)
+- [ ] Logbook: QSO count display
+- [ ] Settings: disable automatic upload to Cloudlog/Wavelog
+- [ ] FSM: skip TX1 (grid) when answering a CQ station
+
+See [TODO.md](TODO.md) for details.
 
 ### Tested Radios
 
