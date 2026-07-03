@@ -2412,11 +2412,34 @@ export default function App() {
       {showAbout && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-4">
           <div className="bg-panel border border-border-subtle p-6 rounded-lg shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-6">
+            <div className="flex justify-between items-center mb-3">
               <h2 className="text-sm font-bold uppercase tracking-widest text-text-main">About FT8 Web Client</h2>
               <button onClick={() => setShowAbout(false)} className="text-text-muted hover:text-text-main">
                 <X size={20} />
               </button>
+            </div>
+            <div className="flex flex-wrap gap-2 mb-5">
+              <a
+                href="https://buymeacoffee.com/ok1cdj"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 bg-[#FFDD00] hover:bg-[#ffea42] text-black font-extrabold px-3 py-1.5 rounded transition-transform hover:scale-102 active:scale-98 shadow-sm text-[11px] uppercase tracking-wide cursor-pointer"
+              >
+                <span className="text-sm">☕</span>
+                <span>Buy me a coffee</span>
+              </a>
+              <a
+                href="https://github.com/ok1cdj/FT8web"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 bg-btn border border-border-input hover:border-text-main text-text-muted hover:text-text-main px-3 py-1.5 rounded text-[11px] uppercase tracking-wide transition-colors cursor-pointer"
+              >
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" />
+                  <path d="M9 18c-4.51 2-5-2-7-2" />
+                </svg>
+                <span>Report Issue</span>
+              </a>
             </div>
             
             <div className="space-y-4 text-xs text-text-main leading-relaxed">
@@ -2429,14 +2452,15 @@ export default function App() {
 
               <div>
                 <h3 className="font-bold text-green-600 dark:text-[#4caf50] mb-1">2. Configuration</h3>
-                <p>Open the <strong>Settings</strong> to set your Call Sign and Grid Square and configure CAT control.</p>
+                <p>Open <strong>Settings</strong> to set your Call Sign, Grid Square, and CAT control.</p>
               </div>
 
               <div>
                 <h3 className="font-bold text-green-600 dark:text-[#4caf50] mb-1">3. Operations</h3>
-                <p>Select your band using the pill buttons. If CAT is configured, this will change the radio's VFO and poll its frequency.</p>
-                <p>FT8 relies strictly on synchronized UTC time. Verify your system clock is accurate. Decodes appear automatically at the :00, :15, :30, and :45 marks.</p>
-                <p>Enable TX by pressing Enable TX button. If you initiate a connection manually via CQ or answer from Band Activity, it will wait for the synchronization boundary to transmit.</p>
+                <p>Select your band using the pill buttons and choose <strong>FT8</strong> or <strong>FT4</strong> mode. FT8 decodes at :00, :15, :30, :45; FT4 decodes at :00, :07, :15, :22, :30, :37, :45, :52.</p>
+                <p>Both modes rely strictly on synchronized UTC time — verify your system clock is accurate.</p>
+                <p>Each decoded callsign shows a DXCC entity badge and an <strong>N</strong> (new) or <strong>W</strong> (worked) indicator for the current band and mode.</p>
+                <p>Enable TX and the FSM will automatically manage CQ, grid exchange, SNR report, and 73.</p>
               </div>
 
               <div>
@@ -2447,8 +2471,8 @@ export default function App() {
 
               <div className="pt-4 mt-4 border-t border-border-subtle">
                 <h3 className="font-bold text-green-600 dark:text-[#4caf50] mb-1">Tested Radios & Feedback</h3>
-                <p className="mb-2"><strong>Officially Tested:</strong> IC-7300, IC-705.</p>
-                <p className="mb-2">We need more real-world validation with <strong>Kenwood</strong> and <strong>QDX</strong> transceivers. If you have success running this web app with your radio model, please report it to us on GitHub!</p>
+                <p className="mb-2"><strong>Tested:</strong> IC-705, IC-7300, Yaesu FTX-1, Flex 6400, Flex 8400. FT-817 in progress.</p>
+                <p className="mb-2">If you have success with your radio model — or hit a protocol issue — please report it on GitHub!</p>
               </div>
 
               <div className="pt-4 mt-4 border-t border-border-subtle">
@@ -2460,34 +2484,16 @@ export default function App() {
                   <li><strong className="text-text-main">FT8/FT4 Protocols:</strong> FT8 and FT4 are digital amateur radio modes designed for weak-signal communication, originally developed by <strong>Joe Taylor (K1JT)</strong> and <strong>Steve Franke (K9AN)</strong> as part of the WSJT-X suite.</li>
                   <li><strong className="text-text-main">DSP Implementation:</strong> This application utilizes the pure TypeScript DSP library <a href="https://github.com/e04/ft8ts" target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 underline font-semibold">@e04/ft8ts</a>.</li>
                 </ul>
-
-                <div className="flex flex-wrap gap-2 pt-2 border-t border-border-subtle/40">
-                  <a 
-                    href="https://buymeacoffee.com/ok1cdj" 
-                    target="_blank" 
-                    rel="noreferrer" 
-                    className="inline-flex items-center gap-1.5 bg-[#FFDD00] hover:bg-[#ffea42] text-black font-extrabold px-3 py-1.5 rounded transition-transform hover:scale-102 active:scale-98 shadow-sm text-[11px] uppercase tracking-wide cursor-pointer"
-                  >
-                    <span className="text-sm">☕</span>
-                    <span>Buy me a coffee</span>
-                  </a>
-                  <a 
-                    href="https://github.com/ok1cdj/FT8web" 
-                    target="_blank" 
-                    rel="noreferrer" 
-                    className="inline-flex items-center gap-1.5 bg-btn border border-border-input hover:border-text-main text-text-muted hover:text-text-main px-3 py-1.5 rounded text-[11px] uppercase tracking-wide transition-colors cursor-pointer"
-                  >
-                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" />
-                      <path d="M9 18c-4.51 2-5-2-7-2" />
-                    </svg>
-                    <span>Report Issue</span>
-                  </a>
-                </div>
               </div>
             </div>
 
-            <div className="mt-8 flex justify-end">
+            <div className="mt-4 pt-3 border-t border-border-subtle/40">
+              <p className="text-[9px] text-text-muted leading-relaxed">
+                The algorithms, source code, look-and-feel of WSJT-X and related programs, and protocol specifications for the modes FSK441, FST4, FST4W, FT4, FT8, JT4, JT6M, JT9, JT44, JT65, JTMS, Q65, QRA64, ISCAT, and MSK144 are Copyright © 2001-2026 by one or more of the following authors: Joseph Taylor, K1JT; Bill Somerville, G4WJS; Steven Franke, K9AN; Nico Palermo, IV3NWV; Uwe Risse, DG2YCB; Brian Moran, N9ADG; John Nelson, G4KLA; Charles Suckling, DL3WDG; Roger Rehr, W3SZ; Greg Beam, KI7MT; Michael Black, W9MDB; Edson Pereira, PY2SDR; Philip Karn, KA9Q; and other members of the WSJT Development Group.
+              </p>
+            </div>
+
+            <div className="mt-4 flex justify-end">
                 <button 
                   onClick={() => setShowAbout(false)}
                   className="bg-app border border-border-input hover:bg-btn text-text-main px-6 py-2 rounded text-xs font-bold uppercase tracking-widest transition-colors"
