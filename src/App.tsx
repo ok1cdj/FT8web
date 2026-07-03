@@ -18,6 +18,7 @@ export interface FT8DecodedMessage {
   snr: number;
   freq: number;
   message: string;
+  periodIndex?: number;
   isDivider?: boolean;
   isTx?: boolean;
   isIncoming?: boolean;
@@ -889,10 +890,11 @@ export default function App() {
             setDecodeStats({ count: e.data.count, durationMs: e.data.durationMs });
         }
         
-        const payload = e.data.payload || [];
+        const payload = (e.data.payload || []).map((msg: FT8DecodedMessage) => ({ ...msg }));
         const _now = new Date();
         const _totalSec = _now.getUTCSeconds() + _now.getUTCMilliseconds() / 1000;
         const decPeriodIndex = Math.floor(_totalSec / (modeRef.current === 'FT4' ? 7.5 : 15)) % 2;
+        payload.forEach((msg: FT8DecodedMessage) => { msg.periodIndex = decPeriodIndex; });
 
         if (payload.length > 0) {
             setRxLog(prev => {
@@ -1758,9 +1760,13 @@ export default function App() {
                         }
 
                         // Auto-set TX period to the OPPOSITE of the caller's period
-                        const seconds = parseInt(log.time.substring(4, 6), 10);
-                        const periodLen = mode === 'FT4' ? 7.5 : 15;
-                        const callerPeriod = Math.floor(seconds / periodLen) % 2;
+                        const callerPeriod = log.periodIndex !== undefined
+                          ? log.periodIndex
+                          : (() => {
+                              const seconds = parseInt(log.time.substring(4, 6), 10);
+                              const periodLen = mode === 'FT4' ? 7.5 : 15;
+                              return Math.floor(seconds / periodLen) % 2;
+                            })();
                         setTxPeriod(callerPeriod === 0 ? 1 : 0);
                       }}
                       className={`grid grid-cols-[55px_40px_60px_1fr] gap-2 hover:bg-btn cursor-pointer p-1 rounded transition-colors group text-[11px] items-center ${
@@ -1871,11 +1877,17 @@ export default function App() {
                       }
 
                       // If incoming message, set TX period to OPPOSITE of caller's period
-                      if (!log.isTx && log.time && log.time.length >= 6) {
-                        const seconds = parseInt(log.time.substring(4, 6), 10);
-                        const periodLen = mode === 'FT4' ? 7.5 : 15;
-                        const callerPeriod = Math.floor(seconds / periodLen) % 2;
-                        setTxPeriod(callerPeriod === 0 ? 1 : 0);
+                      if (!log.isTx) {
+                        const callerPeriod = log.periodIndex !== undefined
+                          ? log.periodIndex
+                          : log.time && log.time.length >= 6
+                            ? (() => {
+                                const seconds = parseInt(log.time.substring(4, 6), 10);
+                                const periodLen = mode === 'FT4' ? 7.5 : 15;
+                                return Math.floor(seconds / periodLen) % 2;
+                              })()
+                            : null;
+                        if (callerPeriod !== null) setTxPeriod(callerPeriod === 0 ? 1 : 0);
                       }
                     }}
                     className="grid grid-cols-[55px_40px_60px_1fr] gap-2 hover:bg-btn cursor-pointer p-1 rounded transition-colors group text-[11px] items-center"
