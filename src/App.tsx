@@ -11,12 +11,14 @@ import { VersionInfo } from './components/VersionInfo';
 import { logBook, QSO } from './LogBook';
 import { CloudLogService } from './services/CloudLogService';
 import { LogbookService } from './services/LogbookService';
+import { dxccService } from './services/DxccService';
 
 export interface FT8DecodedMessage {
   time: string;
   snr: number;
   freq: number;
   message: string;
+  periodIndex?: number;
   isDivider?: boolean;
   isTx?: boolean;
   isIncoming?: boolean;
@@ -239,6 +241,8 @@ export default function App() {
 
   // Keep a Set of callsigns worked before on the current band & mode
   const [workedCallsigns, setWorkedCallsigns] = useState<Set<string>>(new Set());
+  const [dxccReady, setDxccReady] = useState(false);
+  const [workedDxccEntities, setWorkedDxccEntities] = useState<Set<string>>(new Set());
 
   // Helper to determine band from VFO frequency
   const getBandFromFreq = useCallback((freqInHz: number): string => {
@@ -276,6 +280,55 @@ export default function App() {
       window.removeEventListener('qso-logged', handleQsoChange);
     };
   }, [loadWorkedCallsigns]);
+
+  const backfillDxcc = async (): Promise<void> => {
+    const qsos = await logBook.getAllQSOs();
+    for (const qso of qsos) {
+      if (qso.dxcc === undefined) {
+        const entity = dxccService.lookup(qso.call);
+        if (entity) await logBook.updateQSO({ ...qso, dxcc: entity.adifCode }).catch(() => {});
+      }
+    }
+  };
+
+  const loadWorkedDxccEntities = useCallback(async () => {
+    if (!dxccService.loaded) return;
+    const currentBand = getBandFromFreq(vfoFreq);
+    const qsos = await logBook.getAllQSOs();
+    const worked = new Set<string>();
+    for (const qso of qsos) {
+      const qsoBand = (qso.band || '').trim().toUpperCase();
+      const qsoMode = (qso.mode || '').trim().toUpperCase();
+      if (qsoBand !== currentBand.toUpperCase() || qsoMode !== mode.toUpperCase()) continue;
+      const entity = dxccService.lookup(qso.call);
+      if (entity) worked.add(entity.primaryPrefix);
+    }
+    setWorkedDxccEntities(worked);
+  }, [vfoFreq, getBandFromFreq, mode]);
+
+  useEffect(() => {
+    dxccService.load().then(async () => {
+      if (!dxccService.loaded) { setDxccReady(true); return; }
+      try {
+        await backfillDxcc();
+        await loadWorkedDxccEntities();
+      } catch (e) {
+        console.warn('[DXCC] Init failed:', e);
+      }
+      setDxccReady(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!dxccReady) return;
+    loadWorkedDxccEntities();
+  }, [loadWorkedDxccEntities, dxccReady]);
+
+  useEffect(() => {
+    if (!dxccReady) return;
+    window.addEventListener('qso-logged', loadWorkedDxccEntities);
+    return () => window.removeEventListener('qso-logged', loadWorkedDxccEntities);
+  }, [loadWorkedDxccEntities, dxccReady]);
 
   const [catMode, setCatMode] = useState<'manual'|'kenwood'|'yaesu'|'old-yaesu'|'elecraft'|'qdx'|'icom'>(() => {
     const saved = localStorage.getItem('ft8_catMode') as 'manual'|'kenwood'|'yaesu'|'old-yaesu'|'elecraft'|'qdx'|'icom';
@@ -837,10 +890,11 @@ export default function App() {
             setDecodeStats({ count: e.data.count, durationMs: e.data.durationMs });
         }
         
-        const payload = e.data.payload || [];
+        const payload = (e.data.payload || []).map((msg: FT8DecodedMessage) => ({ ...msg }));
         const _now = new Date();
         const _totalSec = _now.getUTCSeconds() + _now.getUTCMilliseconds() / 1000;
         const decPeriodIndex = Math.floor(_totalSec / (modeRef.current === 'FT4' ? 7.5 : 15)) % 2;
+        payload.forEach((msg: FT8DecodedMessage) => { msg.periodIndex = decPeriodIndex; });
 
         if (payload.length > 0) {
             setRxLog(prev => {
@@ -1265,6 +1319,7 @@ export default function App() {
 
             const currentVfo = vfoFreqRef.current;
 
+            const dxccEntity = dxccService.lookup(qsoData.call);
             const qsoRecord: QSO = {
                 call: qsoData.call,
                 qso_date: dateStr,
@@ -1277,7 +1332,8 @@ export default function App() {
                 rst_rcvd: qsoData.rst_rcvd || "",
                 gridsquare: qsoData.grid || "",
                 timestamp: now.getTime(),
-                synced: false
+                synced: false,
+                dxcc: dxccEntity?.adifCode,
             };
 
             const id = await logBook.logQSO(qsoRecord);
@@ -1704,9 +1760,13 @@ export default function App() {
                         }
 
                         // Auto-set TX period to the OPPOSITE of the caller's period
-                        const seconds = parseInt(log.time.substring(4, 6), 10);
-                        const periodLen = mode === 'FT4' ? 7.5 : 15;
-                        const callerPeriod = Math.floor(seconds / periodLen) % 2;
+                        const callerPeriod = log.periodIndex !== undefined
+                          ? log.periodIndex
+                          : (() => {
+                              const seconds = parseInt(log.time.substring(4, 6), 10);
+                              const periodLen = mode === 'FT4' ? 7.5 : 15;
+                              return Math.floor(seconds / periodLen) % 2;
+                            })();
                         setTxPeriod(callerPeriod === 0 ? 1 : 0);
                       }}
                       className={`grid grid-cols-[55px_40px_60px_1fr] gap-2 hover:bg-btn cursor-pointer p-1 rounded transition-colors group text-[11px] items-center ${
@@ -1719,13 +1779,22 @@ export default function App() {
                       <span className="text-text-main group-hover:text-text-highlight font-bold flex items-center flex-wrap">
                         {log.message}
                         {isWorked && (
-                          <span 
-                            className="ml-1.5 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono font-bold uppercase bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400 border border-neutral-300 dark:border-neutral-700/60 leading-none select-none" 
+                          <span
+                            className="ml-1.5 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono font-bold uppercase bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400 border border-neutral-300 dark:border-neutral-700/60 leading-none select-none"
                             title="Worked before on this band and mode (B4)"
                           >
                             B4
                           </span>
                         )}
+                        {dxccReady && callsign && (() => {
+                          const entity = dxccService.lookup(callsign);
+                          if (!entity) return null;
+                          const isNewDxcc = !workedDxccEntities.has(entity.primaryPrefix);
+                          return <>
+                            <span className="ml-1 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono font-bold uppercase bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400 border border-neutral-300 dark:border-neutral-700/60 leading-none select-none" title={isNewDxcc ? "New DXCC entity" : "Worked DXCC entity"}>{isNewDxcc ? 'N' : 'W'}</span>
+                            <span className="ml-1 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono uppercase bg-cyan-900/40 text-cyan-400 border border-cyan-700/40 leading-none select-none" title={entity.name}>{entity.primaryPrefix}</span>
+                          </>;
+                        })()}
                       </span>
                     </div>
                   );
@@ -1806,11 +1875,17 @@ export default function App() {
                       }
 
                       // If incoming message, set TX period to OPPOSITE of caller's period
-                      if (!log.isTx && log.time && log.time.length >= 6) {
-                        const seconds = parseInt(log.time.substring(4, 6), 10);
-                        const periodLen = mode === 'FT4' ? 7.5 : 15;
-                        const callerPeriod = Math.floor(seconds / periodLen) % 2;
-                        setTxPeriod(callerPeriod === 0 ? 1 : 0);
+                      if (!log.isTx) {
+                        const callerPeriod = log.periodIndex !== undefined
+                          ? log.periodIndex
+                          : log.time && log.time.length >= 6
+                            ? (() => {
+                                const seconds = parseInt(log.time.substring(4, 6), 10);
+                                const periodLen = mode === 'FT4' ? 7.5 : 15;
+                                return Math.floor(seconds / periodLen) % 2;
+                              })()
+                            : null;
+                        if (callerPeriod !== null) setTxPeriod(callerPeriod === 0 ? 1 : 0);
                       }
                     }}
                     className="grid grid-cols-[55px_40px_60px_1fr] gap-2 hover:bg-btn cursor-pointer p-1 rounded transition-colors group text-[11px] items-center"
@@ -1818,7 +1893,19 @@ export default function App() {
                     <span className="text-zinc-500">{log.time}</span>
                     <span className={log.isTx ? 'text-zinc-500' : (log.snr > -10 ? 'text-green-400' : 'text-red-400')}>{log.isTx ? '--' : log.snr}</span>
                     <span className="text-blue-400">{log.freq}Hz</span>
-                    <span className={`group-hover:text-text-highlight ${textClass}`}>{log.message}</span>
+                    <span className={`group-hover:text-text-highlight ${textClass} flex items-center flex-wrap`}>
+                      {log.message}
+                      {dxccReady && !log.isTx && (() => {
+                        const cs = extractTransmitterCallsign(log.message);
+                        const entity = cs ? dxccService.lookup(cs) : null;
+                        if (!entity) return null;
+                        const isNewDxcc = !workedDxccEntities.has(entity.primaryPrefix);
+                        return <>
+                          <span className="ml-1 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono font-bold uppercase bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400 border border-neutral-300 dark:border-neutral-700/60 leading-none select-none" title={isNewDxcc ? "New DXCC entity" : "Worked DXCC entity"}>{isNewDxcc ? 'N' : 'W'}</span>
+                          <span className="ml-1 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono uppercase bg-cyan-900/40 text-cyan-400 border border-cyan-700/40 leading-none select-none" title={entity.name}>{entity.primaryPrefix}</span>
+                        </>;
+                      })()}
+                    </span>
                   </div>
                   );
                 })}

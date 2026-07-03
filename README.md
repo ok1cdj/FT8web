@@ -16,6 +16,7 @@ A production-ready Amateur Radio FT8/FT4 client running entirely in the browser 
 - **CP2105 Dual-Port Support (Android):** On Android, the CP2105 USB-serial bridge exposes two independent UART interfaces. A channel selector lets you choose which port (Enhanced or Standard) is used for CAT, without needing a second device picker.
 - **"Fake Split" (Rig Split) Transmit Optimization:** Dynamically shifts the transceiver VFO frequency during transmission to keep the modulated audio frequency close to the 1500 Hz filter center. This prevents power roll-off and harmonic splatter near the SSB filter edges (0 Hz and 3000 Hz) while restoring the baseline VFO frequency upon return to RX.
 - **Band Activity & Active QSO:** Separated global logs and targeted incoming/outgoing QSO messages for clear visibility.
+- **DXCC Entity Lookup & New/Worked Indicators:** Loads the `cty.dat` prefix database on startup and resolves every decoded callsign to its DXCC entity (name, primary prefix, ADIF code, CQ/ITU zones, continent). Handles portable suffixes (`/P`, `/MM`, etc.) and longest-prefix matching. In the Band Activity and Active QSO windows each message shows the entity's primary prefix as a cyan badge and a status badge — **N** (new, never worked on the current band/mode) or **W** (already worked on the current band/mode). The worked set is filtered by current band and mode, recalculated whenever the band or mode changes, and updated in real time after every logged QSO. Old logbook entries without a stored DXCC code are back-filled automatically on startup.
 - **Hardware VOX Compatible:** Audio generation uses a hard-start envelope to assure VOX will work natively as an alternative to CAT control.
 - **Live Waterfall:** Web Audio API AnalyserNode rendering a high-contrast waterfall focused tightly on the SSB filter bandwidth (0 Hz - 3000 Hz).
 - **Audio Output Device Selection:** Choose a specific audio output device for TX (headphones, USB audio, etc.) independently from the system default. Requires Chrome on desktop.
@@ -86,6 +87,7 @@ Log your FT8/FT4 QSOs automatically with **Wavelog** or **Cloudlog**:
 ## 🗺️ Roadmap / Upcoming Features
 - [ ] Intensive testing with more radios
 - [x] FT4 Mode support (7.5s T/R cycles via `@e04/ft8ts` mode switching)
+- [x] DXCC entity lookup and N/W status indicators per band and mode
 - [ ] Built-in better logbook
 
 ### Tested Radios

@@ -12,6 +12,7 @@ export interface QSO {
     gridsquare: string;
     timestamp: number;
     synced?: boolean;
+    dxcc?: number;
 }
 
 export class LogBook {
@@ -123,7 +124,8 @@ export class LogBook {
             processField("rst_sent", qso.rst_sent);
             processField("rst_rcvd", qso.rst_rcvd);
             processField("gridsquare", qso.gridsquare);
-            
+            if (qso.dxcc) processField("dxcc", qso.dxcc);
+
             row += "<eor>\n";
             adif += row;
         }
