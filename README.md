@@ -118,3 +118,7 @@ This project is open-source and licensed under the **GNU General Public License 
 ### Acknowledgments
 * **FT8/FT4 Protocols:** FT8 and FT4 are digital amateur radio modes designed for weak-signal communication, originally developed by **Joe Taylor (K1JT)** and **Steve Franke (K9AN)** as part of the WSJT-X suite.
 * **DSP Implementation:** This application utilizes the pure TypeScript DSP library `@e04/ft8ts`.
+
+### WSJT-X Copyright Notice
+
+The algorithms, source code, look-and-feel of WSJT-X and related programs, and protocol specifications for the modes FSK441, FST4, FST4W, FT4, FT8, JT4, JT6M, JT9, JT44, JT65, JTMS, Q65, QRA64, ISCAT, and MSK144 are Copyright © 2001-2026 by one or more of the following authors: Joseph Taylor, K1JT; Bill Somerville, G4WJS; Steven Franke, K9AN; Nico Palermo, IV3NWV; Uwe Risse, DG2YCB; Brian Moran, N9ADG; John Nelson, G4KLA; Charles Suckling, DL3WDG; Roger Rehr, W3SZ; Greg Beam, KI7MT; Michael Black, W9MDB; Edson Pereira, PY2SDR; Philip Karn, KA9Q; and other members of the WSJT Development Group.
