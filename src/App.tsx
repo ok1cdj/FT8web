@@ -242,7 +242,7 @@ export default function App() {
   // Keep a Set of callsigns worked before on the current band & mode
   const [workedCallsigns, setWorkedCallsigns] = useState<Set<string>>(new Set());
   const [dxccReady, setDxccReady] = useState(false);
-  const [workedDxccEntities, setWorkedDxccEntities] = useState<Set<number>>(new Set());
+  const [workedDxccEntities, setWorkedDxccEntities] = useState<Set<string>>(new Set());
 
   // Helper to determine band from VFO frequency
   const getBandFromFreq = useCallback((freqInHz: number): string => {
@@ -295,13 +295,13 @@ export default function App() {
     if (!dxccService.loaded) return;
     const currentBand = getBandFromFreq(vfoFreq);
     const qsos = await logBook.getAllQSOs();
-    const worked = new Set<number>();
+    const worked = new Set<string>();
     for (const qso of qsos) {
       const qsoBand = (qso.band || '').trim().toUpperCase();
       const qsoMode = (qso.mode || '').trim().toUpperCase();
       if (qsoBand !== currentBand.toUpperCase() || qsoMode !== mode.toUpperCase()) continue;
-      const code = qso.dxcc ?? dxccService.lookup(qso.call)?.adifCode;
-      if (code && code > 0) worked.add(code);
+      const entity = dxccService.lookup(qso.call);
+      if (entity) worked.add(entity.primaryPrefix);
     }
     setWorkedDxccEntities(worked);
   }, [vfoFreq, getBandFromFreq, mode]);
@@ -1789,7 +1789,7 @@ export default function App() {
                         {dxccReady && callsign && (() => {
                           const entity = dxccService.lookup(callsign);
                           if (!entity) return null;
-                          const isNewDxcc = !workedDxccEntities.has(entity.adifCode);
+                          const isNewDxcc = !workedDxccEntities.has(entity.primaryPrefix);
                           return <>
                             <span className="ml-1 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono font-bold uppercase bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400 border border-neutral-300 dark:border-neutral-700/60 leading-none select-none" title={isNewDxcc ? "New DXCC entity" : "Worked DXCC entity"}>{isNewDxcc ? 'N' : 'W'}</span>
                             <span className="ml-1 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono uppercase bg-cyan-900/40 text-cyan-400 border border-cyan-700/40 leading-none select-none" title={entity.name}>{entity.primaryPrefix}</span>
@@ -1899,7 +1899,7 @@ export default function App() {
                         const cs = extractTransmitterCallsign(log.message);
                         const entity = cs ? dxccService.lookup(cs) : null;
                         if (!entity) return null;
-                        const isNewDxcc = !workedDxccEntities.has(entity.adifCode);
+                        const isNewDxcc = !workedDxccEntities.has(entity.primaryPrefix);
                         return <>
                           <span className="ml-1 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono font-bold uppercase bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400 border border-neutral-300 dark:border-neutral-700/60 leading-none select-none" title={isNewDxcc ? "New DXCC entity" : "Worked DXCC entity"}>{isNewDxcc ? 'N' : 'W'}</span>
                           <span className="ml-1 inline-flex items-center text-[7.5px] px-1 py-0.2 rounded font-mono uppercase bg-cyan-900/40 text-cyan-400 border border-cyan-700/40 leading-none select-none" title={entity.name}>{entity.primaryPrefix}</span>
