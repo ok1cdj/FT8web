@@ -42,7 +42,7 @@ To use this application with a real transceiver, follow these steps:
 1. Load the application and click **"ACTIVATE AUDIO"**.
 2. Allow browser permissions to use the microphone/audio input.
 3. Open the **Settings** menu to format your Station Configuration, CAT Protocol overrides, and other preferences.
-   - *Note on CAT:* If setting up CAT control (via Web Serial API), you MUST open the app in a new tab for the browser to allow serial port access (due to iframe permissions). Once in a new tab, select your port and use "Test CAT" to verify frequency reading. On PC/Mac/Linux, serial port filtering is completely removed so the browser will prompt you with all connected serial adapters. On Android, a target set of filter vendor/product IDs is used inside WebUSB to cleanly list eligible USB devices.
+   - *Note on CAT:* Select your port and use "Test CAT" to verify frequency reading. On PC/Mac/Linux, serial port filtering is completely removed so the browser will prompt you with all connected serial adapters. On Android, a target set of filter vendor/product IDs is used inside WebUSB to cleanly list eligible USB devices.
    - *Yaesu Protocol Mode:* Choose **Yaesu** mode for modern Yaesu transceivers (FT-710, FTDX10, FT-991A, FT-891). It uses 38400 baud, forces DTR/RTS signals HIGH for CAT authentication, and maps to standard ASCII commands.
    - *Old Yaesu Protocol Mode:* Choose **Old Yaesu** mode for classic Yaesu transceivers (FT-817, FT-857, FT-897). It uses 5-byte binary commands with BCD-encoded frequencies at 4800 baud.
    - *Elecraft Transceiver Mode:* Choose **Elecraft** mode for Elecraft transceivers (K3, KX3, KX2, etc.). It communicates using ASCII commands at 38400 baud, sets DTR/RTS signals LOW to avoid inadvertent hardware PTT triggers, and supports the same automated split/VFO offset logic as the Kenwood driver.
@@ -85,10 +85,15 @@ Log your FT8/FT4 QSOs automatically with **Wavelog** or **Cloudlog**:
 - **Audio Pipeline:** `AudioWorkletNode` (`AudioWorkletBlob.ts`) for raw sample accumulation (avoiding main thread drops).
 
 ## 🗺️ Roadmap / Upcoming Features
-- [ ] Intensive testing with more radios
+
 - [x] FT4 Mode support (7.5s T/R cycles via `@e04/ft8ts` mode switching)
 - [x] DXCC entity lookup and N/W status indicators per band and mode
-- [ ] Built-in better logbook
+- [ ] DXCC check: ignore mode (band-only)
+- [ ] Logbook: QSO count display
+- [ ] Settings: disable automatic upload to Cloudlog/Wavelog
+- [ ] FSM: skip TX1 (grid) when answering a CQ station
+
+See [TODO.md](TODO.md) for details.
 
 ### Tested Radios
 
@@ -113,3 +118,7 @@ This project is open-source and licensed under the **GNU General Public License 
 ### Acknowledgments
 * **FT8/FT4 Protocols:** FT8 and FT4 are digital amateur radio modes designed for weak-signal communication, originally developed by **Joe Taylor (K1JT)** and **Steve Franke (K9AN)** as part of the WSJT-X suite.
 * **DSP Implementation:** This application utilizes the pure TypeScript DSP library `@e04/ft8ts`.
+
+### WSJT-X Copyright Notice
+
+The algorithms, source code, look-and-feel of WSJT-X and related programs, and protocol specifications for the modes FSK441, FST4, FST4W, FT4, FT8, JT4, JT6M, JT9, JT44, JT65, JTMS, Q65, QRA64, ISCAT, and MSK144 are Copyright © 2001-2026 by one or more of the following authors: Joseph Taylor, K1JT; Bill Somerville, G4WJS; Steven Franke, K9AN; Nico Palermo, IV3NWV; Uwe Risse, DG2YCB; Brian Moran, N9ADG; John Nelson, G4KLA; Charles Suckling, DL3WDG; Roger Rehr, W3SZ; Greg Beam, KI7MT; Michael Black, W9MDB; Edson Pereira, PY2SDR; Philip Karn, KA9Q; and other members of the WSJT Development Group.
