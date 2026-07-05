@@ -110,6 +110,11 @@ python3 examples/udp-bridge/ft8web_udp_bridge.py --udp-port 2238  # custom UDP t
 
 Then enable the External Data Stream in FT8web Settings with URL `ws://localhost:2442`. Your existing WSJT-X companion tools will see FT8web as if it were WSJT-X.
 
+### JSON schema reference
+
+Full field-by-field documentation of all three message types is in
+[`docs/external-stream-schema.md`](docs/external-stream-schema.md).
+
 ## Architecture
 - **Frontend:** React 19 + Vite + Tailwind CSS v4
 - **Hardware Integration Layer:** Custom `UniversalSerialPort` acting as an abstraction over native Web Serial API capability and direct Android `WebUSB` control transfers, facilitating Android USB-OTG connectivity for amateur radio transceivers.
