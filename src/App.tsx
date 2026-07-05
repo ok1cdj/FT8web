@@ -12,6 +12,7 @@ import { logBook, QSO } from './LogBook';
 import { CloudLogService } from './services/CloudLogService';
 import { LogbookService } from './services/LogbookService';
 import { dxccService } from './services/DxccService';
+import { externalStream } from './services/ExternalStreamService';
 
 export interface FT8DecodedMessage {
   time: string;
@@ -367,6 +368,23 @@ export default function App() {
   const [wavelogStationProfileId, setWavelogStationProfileId] = useState<string>(() => {
     return localStorage.getItem('ft8_wavelogStationProfileId') || '';
   });
+
+  const [streamEnabled, setStreamEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('ft8_streamEnabled') === 'true';
+  });
+  const [streamUrl, setStreamUrl] = useState<string>(() => {
+    return localStorage.getItem('ft8_streamUrl') || 'ws://localhost:2442';
+  });
+  const [streamConnected, setStreamConnected] = useState<boolean>(false);
+  useEffect(() => {
+    localStorage.setItem('ft8_streamEnabled', String(streamEnabled));
+    localStorage.setItem('ft8_streamUrl', streamUrl);
+    externalStream.configure(streamEnabled, streamUrl);
+  }, [streamEnabled, streamUrl]);
+  useEffect(() => {
+    externalStream.onStateChange = setStreamConnected;
+    return () => { externalStream.onStateChange = () => {}; };
+  }, []);
 
   const [decodeStats, setDecodeStats] = useState<{ count: number, durationMs: number } | null>(null);
 
@@ -731,6 +749,22 @@ export default function App() {
     wavelogStationProfileIdRef.current = wavelogStationProfileId;
   }, [wavelogStationProfileId]);
 
+  // Push a status snapshot to the external stream whenever rig/operator
+  // state changes (equivalent of the WSJT-X UDP Status message). The
+  // service caches the latest snapshot and replays it on (re)connect.
+  useEffect(() => {
+    externalStream.sendStatus({
+      dialFreqHz: vfoFreq,
+      mode,
+      myCall,
+      myGrid,
+      txFreqHz: txFreq,
+      txEnabled,
+      transmitting: isTransmitting,
+      dxCall: targetCall,
+    });
+  }, [vfoFreq, mode, myCall, myGrid, txFreq, txEnabled, isTransmitting, targetCall]);
+
   // Core References
 
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -895,6 +929,8 @@ export default function App() {
         const _totalSec = _now.getUTCSeconds() + _now.getUTCMilliseconds() / 1000;
         const decPeriodIndex = Math.floor(_totalSec / (modeRef.current === 'FT4' ? 7.5 : 15)) % 2;
         payload.forEach((msg: FT8DecodedMessage) => { msg.periodIndex = decPeriodIndex; });
+
+        externalStream.sendDecodes(payload, vfoFreqRef.current, modeRef.current);
 
         if (payload.length > 0) {
             setRxLog(prev => {
@@ -1335,6 +1371,16 @@ export default function App() {
                 synced: false,
                 dxcc: dxccEntity?.adifCode,
             };
+
+            externalStream.sendQsoLogged({
+                call: qsoRecord.call,
+                grid: qsoRecord.gridsquare,
+                rstSent: qsoRecord.rst_sent,
+                rstRcvd: qsoRecord.rst_rcvd,
+                dialFreqHz: currentVfo,
+                mode: qsoRecord.mode,
+                band: qsoRecord.band,
+            });
 
             const id = await logBook.logQSO(qsoRecord);
             qsoRecord.id = id;
@@ -2361,9 +2407,43 @@ export default function App() {
                   </button>
                 </div>
               )}
-              
+
               <hr className="border-border-subtle my-4" />
-              
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase tracking-widest text-[#8e9299]">External Data Stream</h3>
+                <button
+                    onClick={() => setStreamEnabled(!streamEnabled)}
+                    className={`bg-app border rounded px-3 py-1 text-xs font-mono focus:outline-none transition-colors ${streamEnabled ? 'border-[#4caf50] text-[#4caf50]' : 'border-border-input text-text-main'}`}
+                 >
+                    {streamEnabled ? 'Enabled' : 'Disabled'}
+                 </button>
+              </div>
+
+              {streamEnabled && (
+                <div className="flex flex-col gap-3 mt-2">
+                  <p className="text-[10px] text-text-muted leading-relaxed">
+                    Pushes decodes, status and logged QSOs as JSON to a local WebSocket so
+                    companion apps (loggers, propagation tools) can consume them — like the
+                    WSJT-X UDP protocol, but browser-friendly. One-way; nothing is received.
+                  </p>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] uppercase tracking-widest text-text-muted">WebSocket URL</label>
+                    <input
+                      type="text"
+                      value={streamUrl}
+                      onChange={e => setStreamUrl(e.target.value)}
+                      className="bg-app border border-border-input rounded px-3 py-2 text-sm font-mono w-full focus:outline-none focus:border-[#4caf50] text-text-main"
+                      placeholder="ws://localhost:2442"
+                    />
+                  </div>
+                  <div className={`text-xs font-mono ${streamConnected ? 'text-[#4caf50]' : 'text-text-muted'}`}>
+                    {streamConnected ? '● Connected' : '○ Not connected (retrying…)'}
+                  </div>
+                </div>
+              )}
+
+              <hr className="border-border-subtle my-4" />
+
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] uppercase tracking-widest text-text-muted">Audio Input (RX)</label>
                 <select 
