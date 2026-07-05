@@ -376,11 +376,18 @@ export default function App() {
     return localStorage.getItem('ft8_streamUrl') || 'ws://localhost:2442';
   });
   const [streamConnected, setStreamConnected] = useState<boolean>(false);
+  const streamUrlValid = (() => {
+    try {
+      const u = new URL(streamUrl);
+      return (u.protocol === 'ws:' || u.protocol === 'wss:') &&
+             (u.hostname === 'localhost' || u.hostname === '127.0.0.1');
+    } catch { return false; }
+  })();
   useEffect(() => {
     localStorage.setItem('ft8_streamEnabled', String(streamEnabled));
     localStorage.setItem('ft8_streamUrl', streamUrl);
-    externalStream.configure(streamEnabled, streamUrl);
-  }, [streamEnabled, streamUrl]);
+    externalStream.configure(streamEnabled, streamUrlValid ? streamUrl : '');
+  }, [streamEnabled, streamUrl, streamUrlValid]);
   useEffect(() => {
     externalStream.onStateChange = setStreamConnected;
     return () => { externalStream.onStateChange = () => {}; };
@@ -2432,9 +2439,12 @@ export default function App() {
                       type="text"
                       value={streamUrl}
                       onChange={e => setStreamUrl(e.target.value)}
-                      className="bg-app border border-border-input rounded px-3 py-2 text-sm font-mono w-full focus:outline-none focus:border-[#4caf50] text-text-main"
+                      className={`bg-app border rounded px-3 py-2 text-sm font-mono w-full focus:outline-none text-text-main ${streamUrlValid ? 'border-border-input focus:border-[#4caf50]' : 'border-red-500 focus:border-red-400'}`}
                       placeholder="ws://localhost:2442"
                     />
+                    {!streamUrlValid && (
+                      <span className="text-[10px] text-red-400">Must be a ws:// or wss:// URL pointing to localhost or 127.0.0.1</span>
+                    )}
                   </div>
                   <div className={`text-xs font-mono ${streamConnected ? 'text-[#4caf50]' : 'text-text-muted'}`}>
                     {streamConnected ? '● Connected' : '○ Not connected (retrying…)'}
