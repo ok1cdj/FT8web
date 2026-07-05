@@ -138,10 +138,12 @@ See [TODO.md](TODO.md) for details.
 | :--- | :---: | :---: |
 | **IC-705** | ✅ | ✅ |
 | **IC-7300** | ✅ | ✅ |
+| **IC-7600** | ✅ | Not Tested |
 | **Yaesu FTX-1** | ✅ | ✅ |
 | **Yaesu FT-817** | In Progress | In Progress |
 | **Flex 6400** | ✅ | N/A |
 | **Flex 8400** | ✅ | N/A |
+| **Xiegu X6200** | ✅ | Not Tested |
 
 ### Hardware Testing Feedback
 We have implemented and support serial CAT and PTT protocols for **Kenwood**, **Yaesu** (modern ASCII: FT-710, FTDX10, FT-991A, FT-891), **Old Yaesu binary** (FT-817, FT-857, FT-897), **Elecraft**, **Icom**, and **QDX** transceivers, but some of these configurations are currently **untested in real-world environments**.
