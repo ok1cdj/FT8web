@@ -22,6 +22,7 @@ A production-ready Amateur Radio FT8/FT4 client running entirely in the browser 
 - **Live Waterfall:** Web Audio API AnalyserNode rendering a high-contrast waterfall focused tightly on the SSB filter bandwidth (0 Hz - 3000 Hz).
 - **Audio Output Device Selection:** Choose a specific audio output device for TX (headphones, USB audio, etc.) independently from the system default. Requires Chrome on desktop.
 - **Wavelog & Cloudlog API Logging:** Secure, real-time logging to cloud systems (Wavelog / Cloudlog) with a built-in proxy bypass to protect secret API keys, real-time status reporting, manual single-entry sync buttons, and batch sync commands.
+- **External Data Stream:** Optionally pushes decodes, rig status, and logged QSOs as JSON over a local WebSocket so companion apps (GridTracker, JTAlert, loggers, propagation tools) can consume FT8web data the same way they consume the WSJT-X UDP protocol. Off by default; one-way; fire-and-forget with auto-reconnect.
 - **Mobile Testing & iOS/Android Support:** Built with strict user-interaction requirements for audio contexts to support iOS Safari. Embedded Eruda developer console accessible via `?debug=true` for advanced on-device DSP/CAT protocol debugging.
 
 ## Testing with a Real Radio (Hardware Setup)
@@ -78,6 +79,36 @@ Log your FT8/FT4 QSOs automatically with **Wavelog** or **Cloudlog**:
 4. Enter your **Wavelog API Key** (`wl...` or your standard API key).
 5. Enter your **Station Profile ID** (the corresponding numeric location profile).
 6. Save and successfully log your contacts!
+
+## External Data Stream
+
+FT8web can push a real-time JSON event stream over a local WebSocket, making it a drop-in data source for the same ecosystem tools that work with WSJT-X today — GridTracker, JTAlert, QSO Predictor, logging programs, and anything else that understands the WSJT-X UDP protocol (via the included bridge).
+
+### How it works
+
+- FT8web acts as the **WebSocket client** and connects to an endpoint you run locally (e.g. `ws://localhost:2442`).
+- Three event types are emitted: `decode` (one message per decode period), `status` (whenever rig or operator state changes), and `qso_logged` (on every completed QSO).
+- The stream is **strictly one-way** — nothing sent back by the consumer is acted upon.
+- Connection is **off by default**; enable it in Settings → External Data Stream.
+
+### Setup
+
+1. Open **Settings** and scroll to **External Data Stream**.
+2. Toggle the switch to **Enabled**.
+3. Set the **WebSocket URL** to the address your consumer is listening on (default `ws://localhost:2442`). The URL must point to `localhost` or `127.0.0.1`.
+4. The status indicator turns green once the connection is established.
+
+### Python UDP bridge (WSJT-X ecosystem compatibility)
+
+For tools that speak the **WSJT-X binary UDP protocol** (GridTracker, JTAlert, etc.) without any modification, a reference bridge is included at [`examples/udp-bridge/ft8web_udp_bridge.py`](examples/udp-bridge/ft8web_udp_bridge.py). It accepts the FT8web JSON stream on a local WebSocket and re-emits WSJT-X-format UDP datagrams (Heartbeat, Status, Decode, QSO Logged).
+
+```bash
+pip install websockets
+python3 examples/udp-bridge/ft8web_udp_bridge.py          # WS :2442 → UDP 127.0.0.1:2237
+python3 examples/udp-bridge/ft8web_udp_bridge.py --udp-port 2238  # custom UDP target
+```
+
+Then enable the External Data Stream in FT8web Settings with URL `ws://localhost:2442`. Your existing WSJT-X companion tools will see FT8web as if it were WSJT-X.
 
 ## Architecture
 - **Frontend:** React 19 + Vite + Tailwind CSS v4
