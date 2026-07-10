@@ -1304,6 +1304,7 @@ export default class CatManager {
         this.driver = new QDXDriver(baudRate || 57600);
         break;
       case 'icom':
+      case 'icom-ws':
         this.driver = new IcomDriver(icomAddress, baudRate || 115200);
         break;
       case 'manual':
