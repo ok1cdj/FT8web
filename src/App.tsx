@@ -2303,6 +2303,13 @@ export default function App() {
                   <span className="text-[10px] text-text-muted font-mono leading-tight mt-0.5">
                     ESP32 bridge address, e.g. ws://192.168.16.140/ws-cat
                   </span>
+                  {window.isSecureContext && civWsUrl.startsWith('ws://') && (
+                    <div className="mt-1 p-2 rounded text-[10px] font-mono leading-tight bg-yellow-900/40 border border-yellow-600/50 text-yellow-300">
+                      Mixed content: browsers block ws:// from HTTPS pages.<br/>
+                      Fix: click the lock icon in the address bar → Site settings → Insecure content → Allow.<br/>
+                      Or open this page over HTTP instead of HTTPS.
+                    </div>
+                  )}
                 </div>
               )}
 
