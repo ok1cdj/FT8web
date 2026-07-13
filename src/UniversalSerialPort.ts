@@ -273,6 +273,59 @@ class AndroidWebUsbPortWrapper implements UniversalSerialPortInstance {
 }
 
 
+export class WebSocketSerialPort implements UniversalSerialPortInstance {
+  public readable: ReadableStream<Uint8Array> | null = null;
+  public writable: WritableStream<Uint8Array> | null = null;
+  private ws: WebSocket | null = null;
+  private readController: ReadableStreamDefaultController<Uint8Array> | null = null;
+
+  constructor(private url: string) {}
+
+  async open(_options: SerialOptions): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(this.url);
+      ws.binaryType = 'arraybuffer';
+      this.ws = ws;
+      let settled = false;
+      const settle = (fn: () => void) => { if (!settled) { settled = true; fn(); } };
+
+      ws.onopen = () => {
+        this.readable = new ReadableStream<Uint8Array>({
+          start: (controller) => {
+            this.readController = controller;
+            ws.onmessage = (e) => {
+              if (e.data instanceof ArrayBuffer) controller.enqueue(new Uint8Array(e.data));
+            };
+            ws.onclose = () => { try { controller.close(); } catch {} };
+            ws.onerror = () => { try { controller.error(new Error('WebSocket error')); } catch {} };
+          },
+          cancel: () => { ws.close(); }
+        });
+        this.writable = new WritableStream<Uint8Array>({
+          write: (chunk) => {
+            if (ws.readyState === WebSocket.OPEN) ws.send(chunk);
+          }
+        });
+        settle(resolve);
+      };
+      ws.onerror = () => settle(() => reject(new Error('WebSocket connection failed: ' + this.url)));
+      ws.onclose = () => settle(() => reject(new Error('WebSocket closed before connecting')));
+    });
+  }
+
+  async close(): Promise<void> {
+    try { this.readController?.close(); } catch {}
+    this.ws?.close();
+    this.ws = null;
+    this.readable = null;
+    this.writable = null;
+  }
+
+  async setSignals(_signals: { requestToSend?: boolean; dataTerminalReady?: boolean }): Promise<void> {
+    // No-op: signal control not applicable over WebSocket
+  }
+}
+
 export class UniversalSerialPort {
   static async requestPort(options: { filters: any[], channelIndex?: number }): Promise<UniversalSerialPortInstance> {
     const isAndroid = /Android/i.test(navigator.userAgent);

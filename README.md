@@ -5,9 +5,10 @@
 **Report Issues:** [GitHub Issues / Help](https://github.com/ok1cdj/FT8web)  
 **Support the Project:** [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Become%20a%20Supporter-FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/ok1cdj)
 
-A production-ready Amateur Radio FT8/FT4 client running entirely in the browser using the Web Audio API, an integrated FSM for automated contacts, and the `@e04/ft8ts` DSP library.
+A production-ready Amateur Radio FT8/FT4 client running entirely in the browser using the Web Audio API, an integrated FSM for automated contacts, and the `@e04/ft8ts` DSP library. Installable as a **Progressive Web App (PWA)** — works fully offline after the first load.
 
 ## Features
+- **Progressive Web App (PWA):** Install directly from the browser on desktop or mobile. All assets are cached on first load so the app runs fully offline — no internet connection required for decoding or transmitting.
 - **FT8 & FT4 Modes:** Switch between FT8 (15s T/R cycles) and FT4 (7.5s T/R cycles) with a single button. Band dial frequencies, timing windows, decode triggers, and TX encoding all switch automatically. Mode is persisted across sessions.
 - **In-Browser Decoding/Encoding:** Uses a Web Worker to decode FT8/FT4 audio streams in the background without blocking the UI.
 - **Automated QSO State Machine:** Incorporates a robust Finite State Machine (FSM) to automatically manage the flow of your digital contacts (CQ, Grid, SNR Report, 73) and handle DX pile-up caller distance priority sorting.
@@ -21,6 +22,7 @@ A production-ready Amateur Radio FT8/FT4 client running entirely in the browser 
 - **Live Waterfall:** Web Audio API AnalyserNode rendering a high-contrast waterfall focused tightly on the SSB filter bandwidth (0 Hz - 3000 Hz).
 - **Audio Output Device Selection:** Choose a specific audio output device for TX (headphones, USB audio, etc.) independently from the system default. Requires Chrome on desktop.
 - **Wavelog & Cloudlog API Logging:** Secure, real-time logging to cloud systems (Wavelog / Cloudlog) with a built-in proxy bypass to protect secret API keys, real-time status reporting, manual single-entry sync buttons, and batch sync commands.
+- **External Data Stream:** Optionally pushes decodes, rig status, and logged QSOs as JSON over a local WebSocket so companion apps (GridTracker, JTAlert, loggers, propagation tools) can consume FT8web data the same way they consume the WSJT-X UDP protocol. Off by default; one-way; fire-and-forget with auto-reconnect.
 - **Mobile Testing & iOS/Android Support:** Built with strict user-interaction requirements for audio contexts to support iOS Safari. Embedded Eruda developer console accessible via `?debug=true` for advanced on-device DSP/CAT protocol debugging.
 
 ## Testing with a Real Radio (Hardware Setup)
@@ -78,6 +80,41 @@ Log your FT8/FT4 QSOs automatically with **Wavelog** or **Cloudlog**:
 5. Enter your **Station Profile ID** (the corresponding numeric location profile).
 6. Save and successfully log your contacts!
 
+## External Data Stream
+
+FT8web can push a real-time JSON event stream over a local WebSocket, making it a drop-in data source for the same ecosystem tools that work with WSJT-X today — GridTracker, JTAlert, QSO Predictor, logging programs, and anything else that understands the WSJT-X UDP protocol (via the included bridge).
+
+### How it works
+
+- FT8web acts as the **WebSocket client** and connects to an endpoint you run locally (e.g. `ws://localhost:2442`).
+- Three event types are emitted: `decode` (one message per decode period), `status` (whenever rig or operator state changes), and `qso_logged` (on every completed QSO).
+- The stream is **strictly one-way** — nothing sent back by the consumer is acted upon.
+- Connection is **off by default**; enable it in Settings → External Data Stream.
+
+### Setup
+
+1. Open **Settings** and scroll to **External Data Stream**.
+2. Toggle the switch to **Enabled**.
+3. Set the **WebSocket URL** to the address your consumer is listening on (default `ws://localhost:2442`). The URL must point to `localhost` or `127.0.0.1`.
+4. The status indicator turns green once the connection is established.
+
+### Python UDP bridge (WSJT-X ecosystem compatibility)
+
+For tools that speak the **WSJT-X binary UDP protocol** (GridTracker, JTAlert, etc.) without any modification, a reference bridge is included at [`examples/udp-bridge/ft8web_udp_bridge.py`](examples/udp-bridge/ft8web_udp_bridge.py). It accepts the FT8web JSON stream on a local WebSocket and re-emits WSJT-X-format UDP datagrams (Heartbeat, Status, Decode, QSO Logged).
+
+```bash
+pip install websockets
+python3 examples/udp-bridge/ft8web_udp_bridge.py          # WS :2442 → UDP 127.0.0.1:2237
+python3 examples/udp-bridge/ft8web_udp_bridge.py --udp-port 2238  # custom UDP target
+```
+
+Then enable the External Data Stream in FT8web Settings with URL `ws://localhost:2442`. Your existing WSJT-X companion tools will see FT8web as if it were WSJT-X.
+
+### JSON schema reference
+
+Full field-by-field documentation of all three message types is in
+[`docs/external-stream-schema.md`](docs/external-stream-schema.md).
+
 ## Architecture
 - **Frontend:** React 19 + Vite + Tailwind CSS v4
 - **Hardware Integration Layer:** Custom `UniversalSerialPort` acting as an abstraction over native Web Serial API capability and direct Android `WebUSB` control transfers, facilitating Android USB-OTG connectivity for amateur radio transceivers.
@@ -101,10 +138,12 @@ See [TODO.md](TODO.md) for details.
 | :--- | :---: | :---: |
 | **IC-705** | ✅ | ✅ |
 | **IC-7300** | ✅ | ✅ |
+| **IC-7600** | ✅ | Not Tested |
 | **Yaesu FTX-1** | ✅ | ✅ |
 | **Yaesu FT-817** | In Progress | In Progress |
 | **Flex 6400** | ✅ | N/A |
 | **Flex 8400** | ✅ | N/A |
+| **Xiegu X6200** | ✅ | Not Tested |
 
 ### Hardware Testing Feedback
 We have implemented and support serial CAT and PTT protocols for **Kenwood**, **Yaesu** (modern ASCII: FT-710, FTDX10, FT-991A, FT-891), **Old Yaesu binary** (FT-817, FT-857, FT-897), **Elecraft**, **Icom**, and **QDX** transceivers, but some of these configurations are currently **untested in real-world environments**.

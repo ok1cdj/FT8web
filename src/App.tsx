@@ -3,7 +3,7 @@ import { Activity, Settings, X, HelpCircle } from 'lucide-react';
 import { getCaptureWorkletUrl } from './AudioWorkletBlob';
 import { encodeFT8, encodeFT4 } from '@e04/ft8ts';
 import CatManager from './CatManager.js';
-import { UniversalSerialPort } from './UniversalSerialPort';
+import { UniversalSerialPort, WebSocketSerialPort } from './UniversalSerialPort';
 import FT8FSM, { QueuedCaller } from './FT8FSM';
 
 import { LogBookViewer } from './components/LogBookViewer';
@@ -12,6 +12,7 @@ import { logBook, QSO } from './LogBook';
 import { CloudLogService } from './services/CloudLogService';
 import { LogbookService } from './services/LogbookService';
 import { dxccService } from './services/DxccService';
+import { externalStream } from './services/ExternalStreamService';
 
 export interface FT8DecodedMessage {
   time: string;
@@ -330,8 +331,8 @@ export default function App() {
     return () => window.removeEventListener('qso-logged', loadWorkedDxccEntities);
   }, [loadWorkedDxccEntities, dxccReady]);
 
-  const [catMode, setCatMode] = useState<'manual'|'kenwood'|'yaesu'|'old-yaesu'|'elecraft'|'qdx'|'icom'>(() => {
-    const saved = localStorage.getItem('ft8_catMode') as 'manual'|'kenwood'|'yaesu'|'old-yaesu'|'elecraft'|'qdx'|'icom';
+  const [catMode, setCatMode] = useState<'manual'|'kenwood'|'yaesu'|'old-yaesu'|'elecraft'|'qdx'|'icom'|'icom-ws'>(() => {
+    const saved = localStorage.getItem('ft8_catMode') as 'manual'|'kenwood'|'yaesu'|'old-yaesu'|'elecraft'|'qdx'|'icom'|'icom-ws';
     const isAndroid = /Android/i.test(navigator.userAgent);
     if (isAndroid && saved === 'qdx') {
       return 'manual';
@@ -344,6 +345,9 @@ export default function App() {
   });
   const [icomAddress, setIcomAddress] = useState<string>(() => {
     return localStorage.getItem('ft8_icomAddress') || '94';
+  });
+  const [civWsUrl, setCivWsUrl] = useState<string>(() => {
+    return localStorage.getItem('ft8_civWsUrl') || 'ws://192.168.1.1/ws-cat';
   });
   const [cp2105Channel, setCp2105Channel] = useState<0 | 1>(() => {
     return (Number(localStorage.getItem('ft8_cp2105Channel')) || 0) as 0 | 1;
@@ -367,6 +371,30 @@ export default function App() {
   const [wavelogStationProfileId, setWavelogStationProfileId] = useState<string>(() => {
     return localStorage.getItem('ft8_wavelogStationProfileId') || '';
   });
+
+  const [streamEnabled, setStreamEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('ft8_streamEnabled') === 'true';
+  });
+  const [streamUrl, setStreamUrl] = useState<string>(() => {
+    return localStorage.getItem('ft8_streamUrl') || 'ws://localhost:2442';
+  });
+  const [streamConnected, setStreamConnected] = useState<boolean>(false);
+  const streamUrlValid = (() => {
+    try {
+      const u = new URL(streamUrl);
+      return (u.protocol === 'ws:' || u.protocol === 'wss:') &&
+             (u.hostname === 'localhost' || u.hostname === '127.0.0.1');
+    } catch { return false; }
+  })();
+  useEffect(() => {
+    localStorage.setItem('ft8_streamEnabled', String(streamEnabled));
+    localStorage.setItem('ft8_streamUrl', streamUrl);
+    externalStream.configure(streamEnabled, streamUrlValid ? streamUrl : '');
+  }, [streamEnabled, streamUrl, streamUrlValid]);
+  useEffect(() => {
+    externalStream.onStateChange = setStreamConnected;
+    return () => { externalStream.onStateChange = () => {}; };
+  }, []);
 
   const [decodeStats, setDecodeStats] = useState<{ count: number, durationMs: number } | null>(null);
 
@@ -428,13 +456,14 @@ export default function App() {
       localStorage.setItem('ft8_catMode', catMode);
       localStorage.setItem('ft8_catBaudRate', catBaudRate.toString());
       localStorage.setItem('ft8_icomAddress', icomAddress);
+      localStorage.setItem('ft8_civWsUrl', civWsUrl);
       localStorage.setItem('ft8_cp2105Channel', cp2105Channel.toString());
       localStorage.setItem('ft8_maxLogEntries', maxLogEntries.toString());
       localStorage.setItem('ft8_wavelogEnabled', String(wavelogEnabled));
       localStorage.setItem('ft8_wavelogUrl', wavelogUrl);
       localStorage.setItem('ft8_wavelogApiKey', wavelogApiKey);
       localStorage.setItem('ft8_wavelogStationProfileId', wavelogStationProfileId);
-  }, [myCall, myGrid, txFreq, decodeDepth, maxRetries, finalMessageMode, catMode, catBaudRate, icomAddress, cp2105Channel, maxLogEntries, wavelogEnabled, wavelogUrl, wavelogApiKey, wavelogStationProfileId]);
+  }, [myCall, myGrid, txFreq, decodeDepth, maxRetries, finalMessageMode, catMode, catBaudRate, icomAddress, civWsUrl, cp2105Channel, maxLogEntries, wavelogEnabled, wavelogUrl, wavelogApiKey, wavelogStationProfileId]);
 
   // UI State
   const [showSettings, setShowSettings] = useState(false);
@@ -450,9 +479,11 @@ export default function App() {
 
   const catRef = useRef<CatManager | null>(null);
 
-  // Auto-connect to previously permitted serial port if any
+  // Auto-connect to previously permitted serial port if any, or WebSocket for icom-ws
   useEffect(() => {
-    if ('serial' in navigator && catMode !== 'manual') {
+    if (catMode === 'icom-ws') {
+      if (civWsUrl) setSerialPort(new WebSocketSerialPort(civWsUrl));
+    } else if ('serial' in navigator && catMode !== 'manual') {
       (navigator as any).serial.getPorts().then((ports: any[]) => {
         if (ports.length > 0) {
           setSerialPort(ports[0]);
@@ -540,7 +571,7 @@ export default function App() {
         oldCat.disconnect().catch(err => console.error("Error disconnecting on cleanup:", err));
       }
     };
-  }, [serialPort, catMode, catBaudRate, icomAddress]);
+  }, [serialPort, catMode, catBaudRate, icomAddress, civWsUrl]);
 
   // When the user changes the CP2105 channel while a dual-port device is already
   // selected, swap to a new wrapper using the same USB device — no picker shown.
@@ -601,6 +632,15 @@ export default function App() {
       console.error("Failed to select serial port:", e);
       setCatTestResult(`Port selection failed: ${e.message || e}`);
     }
+  };
+
+  const handleConnectCivWs = () => {
+    if (catRef.current) {
+      catRef.current.disconnect().catch(() => {});
+      catRef.current = null;
+    }
+    setSerialPort(new WebSocketSerialPort(civWsUrl));
+    setCatTestResult('Connecting to ' + civWsUrl + '...');
   };
 
   const handleTestCat = async () => {
@@ -730,6 +770,22 @@ export default function App() {
   useEffect(() => {
     wavelogStationProfileIdRef.current = wavelogStationProfileId;
   }, [wavelogStationProfileId]);
+
+  // Push a status snapshot to the external stream whenever rig/operator
+  // state changes (equivalent of the WSJT-X UDP Status message). The
+  // service caches the latest snapshot and replays it on (re)connect.
+  useEffect(() => {
+    externalStream.sendStatus({
+      dialFreqHz: vfoFreq,
+      mode,
+      myCall,
+      myGrid,
+      txFreqHz: txFreq,
+      txEnabled,
+      transmitting: isTransmitting,
+      dxCall: targetCall,
+    });
+  }, [vfoFreq, mode, myCall, myGrid, txFreq, txEnabled, isTransmitting, targetCall]);
 
   // Core References
 
@@ -895,6 +951,8 @@ export default function App() {
         const _totalSec = _now.getUTCSeconds() + _now.getUTCMilliseconds() / 1000;
         const decPeriodIndex = Math.floor(_totalSec / (modeRef.current === 'FT4' ? 7.5 : 15)) % 2;
         payload.forEach((msg: FT8DecodedMessage) => { msg.periodIndex = decPeriodIndex; });
+
+        externalStream.sendDecodes(payload, vfoFreqRef.current, modeRef.current);
 
         if (payload.length > 0) {
             setRxLog(prev => {
@@ -1335,6 +1393,16 @@ export default function App() {
                 synced: false,
                 dxcc: dxccEntity?.adifCode,
             };
+
+            externalStream.sendQsoLogged({
+                call: qsoRecord.call,
+                grid: qsoRecord.gridsquare,
+                rstSent: qsoRecord.rst_sent,
+                rstRcvd: qsoRecord.rst_rcvd,
+                dialFreqHz: currentVfo,
+                mode: qsoRecord.mode,
+                band: qsoRecord.band,
+            });
 
             const id = await logBook.logQSO(qsoRecord);
             qsoRecord.id = id;
@@ -2184,10 +2252,11 @@ export default function App() {
                     <option value="qdx">QDX</option>
                   )}
                   <option value="icom">Icom (CI-V)</option>
+                  <option value="icom-ws">Icom CI-V (WebSocket / ESP32)</option>
                 </select>
               </div>
 
-              {catMode !== 'manual' && (
+              {catMode !== 'manual' && catMode !== 'icom-ws' && (
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] uppercase tracking-widest text-text-muted">Baud Rate</label>
                   <select 
@@ -2205,7 +2274,7 @@ export default function App() {
                 </div>
               )}
 
-              {catMode === 'icom' && (
+              {(catMode === 'icom' || catMode === 'icom-ws') && (
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] uppercase tracking-widest text-text-muted">Icom Address (Hex)</label>
                   <input 
@@ -2217,6 +2286,22 @@ export default function App() {
                   />
                   <span className="text-[10px] text-text-muted font-mono leading-tight mt-0.5">
                     Common addresses: IC-7300: 94 • IC-705: A4 • IC-7100: 88 • IC-9700: A2 • IC-7610: 98 • IC-7000: 70
+                  </span>
+                </div>
+              )}
+
+              {catMode === 'icom-ws' && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] uppercase tracking-widest text-text-muted">WebSocket URL</label>
+                  <input
+                    type="text"
+                    value={civWsUrl}
+                    onChange={e => setCivWsUrl(e.target.value)}
+                    className="bg-app border border-border-input rounded px-3 py-2 text-sm font-mono w-full focus:outline-none focus:border-[#4caf50] text-text-main"
+                    placeholder="ws://192.168.1.1/ws-cat"
+                  />
+                  <span className="text-[10px] text-text-muted font-mono leading-tight mt-0.5">
+                    ESP32 bridge address, e.g. ws://192.168.16.140/ws-cat
                   </span>
                 </div>
               )}
@@ -2238,13 +2323,22 @@ export default function App() {
               {catMode !== 'manual' && (
                 <div className="flex flex-col gap-2 pt-2">
                   <div className="flex gap-2">
+                    {catMode === 'icom-ws' ? (
+                      <button
+                        onClick={handleConnectCivWs}
+                        className="flex-1 bg-app border border-border-input text-text-main hover:bg-[#4caf50] hover:text-white hover:border-[#4caf50] rounded px-3 py-2 text-xs font-mono font-bold transition-colors"
+                      >
+                        {serialPort ? 'Reconnect WS' : 'Connect'}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleSelectSerialPort}
+                        className="flex-1 bg-app border border-border-input text-text-main hover:bg-[#4caf50] hover:text-white hover:border-[#4caf50] rounded px-3 py-2 text-xs font-mono font-bold transition-colors"
+                      >
+                        {serialPort ? 'Port Selected' : 'Select Serial Port'}
+                      </button>
+                    )}
                     <button
-                      onClick={handleSelectSerialPort}
-                      className="flex-1 bg-app border border-border-input text-text-main hover:bg-[#4caf50] hover:text-white hover:border-[#4caf50] rounded px-3 py-2 text-xs font-mono font-bold transition-colors"
-                    >
-                      {serialPort ? 'Port Selected' : 'Select Serial Port'}
-                    </button>
-                    <button 
                       onClick={handleTestCat}
                       disabled={!serialPort}
                       className="flex-1 bg-app border border-border-input text-text-main hover:bg-[#4caf50] hover:text-white hover:border-[#4caf50] disabled:opacity-50 disabled:hover:bg-app disabled:hover:border-border-input disabled:hover:text-text-main rounded px-3 py-2 text-xs font-mono font-bold transition-colors"
@@ -2361,9 +2455,46 @@ export default function App() {
                   </button>
                 </div>
               )}
-              
+
               <hr className="border-border-subtle my-4" />
-              
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase tracking-widest text-[#8e9299]">External Data Stream</h3>
+                <button
+                    onClick={() => setStreamEnabled(!streamEnabled)}
+                    className={`bg-app border rounded px-3 py-1 text-xs font-mono focus:outline-none transition-colors ${streamEnabled ? 'border-[#4caf50] text-[#4caf50]' : 'border-border-input text-text-main'}`}
+                 >
+                    {streamEnabled ? 'Enabled' : 'Disabled'}
+                 </button>
+              </div>
+
+              {streamEnabled && (
+                <div className="flex flex-col gap-3 mt-2">
+                  <p className="text-[10px] text-text-muted leading-relaxed">
+                    Pushes decodes, status and logged QSOs as JSON to a local WebSocket so
+                    companion apps (loggers, propagation tools) can consume them — like the
+                    WSJT-X UDP protocol, but browser-friendly. One-way; nothing is received.
+                  </p>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] uppercase tracking-widest text-text-muted">WebSocket URL</label>
+                    <input
+                      type="text"
+                      value={streamUrl}
+                      onChange={e => setStreamUrl(e.target.value)}
+                      className={`bg-app border rounded px-3 py-2 text-sm font-mono w-full focus:outline-none text-text-main ${streamUrlValid ? 'border-border-input focus:border-[#4caf50]' : 'border-red-500 focus:border-red-400'}`}
+                      placeholder="ws://localhost:2442"
+                    />
+                    {!streamUrlValid && (
+                      <span className="text-[10px] text-red-400">Must be a ws:// or wss:// URL pointing to localhost or 127.0.0.1</span>
+                    )}
+                  </div>
+                  <div className={`text-xs font-mono ${streamConnected ? 'text-[#4caf50]' : 'text-text-muted'}`}>
+                    {streamConnected ? '● Connected' : '○ Not connected (retrying…)'}
+                  </div>
+                </div>
+              )}
+
+              <hr className="border-border-subtle my-4" />
+
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] uppercase tracking-widest text-text-muted">Audio Input (RX)</label>
                 <select 
