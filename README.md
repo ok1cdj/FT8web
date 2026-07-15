@@ -125,12 +125,10 @@ Full field-by-field documentation of all three message types is in
 
 - [x] FT4 Mode support (7.5s T/R cycles via `@e04/ft8ts` mode switching)
 - [x] DXCC entity lookup and N/W status indicators per band and mode
-- [ ] DXCC check: ignore mode (band-only)
-- [ ] Logbook: QSO count display
-- [ ] Settings: disable automatic upload to Cloudlog/Wavelog
-- [ ] FSM: skip TX1 (grid) when answering a CQ station
-
-See [TODO.md](TODO.md) for details.
+- [x] DXCC check: ignore mode (band-only)
+- [x] Logbook: QSO count display
+- [x] Settings: disable automatic upload to Cloudlog/Wavelog
+- [x] FSM: skip TX1 (grid) when answering a CQ station
 
 ### Tested Radios
 
