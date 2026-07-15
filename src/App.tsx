@@ -1831,14 +1831,17 @@ export default function App() {
                               fsmRef.current.targetGrid = null;
                             }
                             if (autoSequence) {
+                              // Seed the report we'll send from the SNR at which we decoded this
+                              // station, so a report-first reply (skipTx1Grid) sends the measured
+                              // value rather than the '-12' fallback.
+                              const snr = log.snr !== undefined ? Math.round(log.snr) : -12;
+                              fsmRef.current.targetReport = snr >= 0
+                                ? `+${String(snr).padStart(2, '0')}`
+                                : `-${String(Math.abs(snr)).padStart(2, '0')}`;
                               const msgContent = log.message.trim().split(/\s+/).slice(2).join(' ').toUpperCase();
                               const reportMatch = msgContent.match(/^R?([+-]\d+)$/);
                               if (reportMatch) {
                                 fsmRef.current.myReceivedReport = reportMatch[1];
-                                const snr = log.snr !== undefined ? Math.round(log.snr) : -12;
-                                fsmRef.current.targetReport = snr >= 0
-                                  ? `+${String(snr).padStart(2, '0')}`
-                                  : `-${String(Math.abs(snr)).padStart(2, '0')}`;
                                 fsmRef.current.updateState('SENDING_R_REPORT', call);
                               } else {
                                 fsmRef.current.updateState('REPLY_SENDING', call);
@@ -1945,14 +1948,17 @@ export default function App() {
                               fsmRef.current.targetGrid = null;
                             }
                             if (autoSequence) {
+                              // Seed the report we'll send from the SNR at which we decoded this
+                              // station, so a report-first reply (skipTx1Grid) sends the measured
+                              // value rather than the '-12' fallback.
+                              const snr = log.snr !== undefined ? Math.round(log.snr) : -12;
+                              fsmRef.current.targetReport = snr >= 0
+                                ? `+${String(snr).padStart(2, '0')}`
+                                : `-${String(Math.abs(snr)).padStart(2, '0')}`;
                               const msgContent = log.message.trim().split(/\s+/).slice(2).join(' ').toUpperCase();
                               const reportMatch = msgContent.match(/^R?([+-]\d+)$/);
                               if (reportMatch) {
                                 fsmRef.current.myReceivedReport = reportMatch[1];
-                                const snr = log.snr !== undefined ? Math.round(log.snr) : -12;
-                                fsmRef.current.targetReport = snr >= 0
-                                  ? `+${String(snr).padStart(2, '0')}`
-                                  : `-${String(Math.abs(snr)).padStart(2, '0')}`;
                                 fsmRef.current.updateState('SENDING_R_REPORT', callsign);
                               } else {
                                 fsmRef.current.updateState('REPLY_SENDING', callsign);
@@ -2089,6 +2095,17 @@ export default function App() {
                 onClick={() => {
                   if (autoSequence && fsmRef.current) {
                     fsmRef.current.targetCall = targetCall;
+                    // Seed the report from the most recent decode of this station so a
+                    // report-first reply (skipTx1Grid) sends the measured SNR, not '-12'.
+                    const lastDecode = [...rxLog].reverse().find(
+                      l => extractTransmitterCallsign(l.message) === targetCall && l.snr !== undefined
+                    );
+                    if (lastDecode) {
+                      const snr = Math.round(lastDecode.snr);
+                      fsmRef.current.targetReport = snr >= 0
+                        ? `+${String(snr).padStart(2, '0')}`
+                        : `-${String(Math.abs(snr)).padStart(2, '0')}`;
+                    }
                     fsmRef.current.updateState('REPLY_SENDING', targetCall);
                     setTxEnabled(true);
                   } else {
