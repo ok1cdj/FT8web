@@ -156,9 +156,10 @@ export default class FT8FSM {
                 txString = `CQ ${this.myCall} ${(this.myGrid || '').substring(0, 4)}`;
                 break;
             case 'REPLY_SENDING':
-                if (this.isNonStandardCompound(this.myCall) || this.isNonStandardCompound(this.targetCall || '')) {
-                    // Compound callsigns exceed the 13-char free-text limit when grid is included;
-                    // skip grid exchange and send the report directly.
+                if (this.directReportCall || this.isNonStandardCompound(this.myCall) || this.isNonStandardCompound(this.targetCall || '')) {
+                    // Skip the grid (TX1) and send the report directly when either the user opted in
+                    // (directReportCall), or a compound callsign would exceed the 13-char free-text
+                    // limit if the grid were included.
                     txString = `${this.targetCall} ${this.myCall} ${this.targetReport || '-12'}`;
                     this.currentState = 'SENDING_REPORT';
                     this.onStateChange(this.currentState, this.targetCall, this.callerQueue);

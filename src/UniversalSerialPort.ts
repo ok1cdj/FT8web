@@ -308,7 +308,13 @@ export class WebSocketSerialPort implements UniversalSerialPortInstance {
         });
         settle(resolve);
       };
-      ws.onerror = () => settle(() => reject(new Error('WebSocket connection failed: ' + this.url)));
+      ws.onerror = () => settle(() => {
+        const mixedContent = window.isSecureContext && this.url.startsWith('ws://');
+        const hint = mixedContent
+          ? ' (page is on HTTPS — allow insecure content in browser site settings, or use HTTP)'
+          : '';
+        reject(new Error('WebSocket connection failed: ' + this.url + hint));
+      });
       ws.onclose = () => settle(() => reject(new Error('WebSocket closed before connecting')));
     });
   }

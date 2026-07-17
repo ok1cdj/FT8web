@@ -132,6 +132,7 @@ export function LogBookViewer({
             <div className="flex justify-between items-center shrink-0 py-2 pt-3 px-3">
                 <div className="flex items-center gap-3">
                     <h3 className="text-xs font-bold text-text-main uppercase tracking-widest text-[#4caf50]">QSO Logbook</h3>
+                    <span className="text-[10px] font-mono text-text-muted">{qsos.length} QSO</span>
                 </div>
                 <div className="flex items-center gap-1.5 flex-wrap">
                     {wavelogEnabled ? (

@@ -4,8 +4,9 @@ export class LogbookService {
   /**
    * Retrieves a Set of all callsigns already worked/logged for the given band and mode.
    * Callsigns are normalized to uppercase for consistent instant checking.
+   * When `ignoreMode` is true, matching is band-only (mode is ignored).
    */
-  static async getWorkedCallsigns(band: string, mode: string): Promise<Set<string>> {
+  static async getWorkedCallsigns(band: string, mode: string, ignoreMode = false): Promise<Set<string>> {
     const workedSet = new Set<string>();
     try {
       const qsos = await logBook.getAllQSOs();
@@ -17,7 +18,7 @@ export class LogbookService {
         const qsoBand = (qso.band || '').trim().toUpperCase();
         const qsoMode = (qso.mode || '').trim().toUpperCase();
 
-        if (qsoBand === targetBand && qsoMode === targetMode) {
+        if (qsoBand === targetBand && (ignoreMode || qsoMode === targetMode)) {
           const call = (qso.call || '').trim().toUpperCase();
           if (call) {
             workedSet.add(call);

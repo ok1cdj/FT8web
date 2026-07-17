@@ -239,11 +239,17 @@ export default function App() {
   const [finalMessageMode, setFinalMessageMode] = useState<'RR73'|'RRR'>(() => {
       return (localStorage.getItem('ft8_finalMessageMode') as 'RR73'|'RRR') || 'RR73';
   });
+  const [skipTx1Grid, setSkipTx1Grid] = useState<boolean>(() => {
+      return localStorage.getItem('ft8_skipTx1Grid') === 'true';
+  });
 
   // Keep a Set of callsigns worked before on the current band & mode
   const [workedCallsigns, setWorkedCallsigns] = useState<Set<string>>(new Set());
   const [dxccReady, setDxccReady] = useState(false);
   const [workedDxccEntities, setWorkedDxccEntities] = useState<Set<string>>(new Set());
+  const [dxccIgnoreMode, setDxccIgnoreMode] = useState<boolean>(() => {
+    return localStorage.getItem('ft8_dxccIgnoreMode') === 'true';
+  });
 
   // Helper to determine band from VFO frequency
   const getBandFromFreq = useCallback((freqInHz: number): string => {
@@ -264,9 +270,9 @@ export default function App() {
 
   const loadWorkedCallsigns = useCallback(async () => {
     const currentBand = getBandFromFreq(vfoFreq);
-    const set = await LogbookService.getWorkedCallsigns(currentBand, mode);
+    const set = await LogbookService.getWorkedCallsigns(currentBand, mode, dxccIgnoreMode);
     setWorkedCallsigns(set);
-  }, [vfoFreq, getBandFromFreq, mode]);
+  }, [vfoFreq, getBandFromFreq, mode, dxccIgnoreMode]);
 
   useEffect(() => {
     loadWorkedCallsigns();
@@ -300,12 +306,13 @@ export default function App() {
     for (const qso of qsos) {
       const qsoBand = (qso.band || '').trim().toUpperCase();
       const qsoMode = (qso.mode || '').trim().toUpperCase();
-      if (qsoBand !== currentBand.toUpperCase() || qsoMode !== mode.toUpperCase()) continue;
+      if (qsoBand !== currentBand.toUpperCase()) continue;
+      if (!dxccIgnoreMode && qsoMode !== mode.toUpperCase()) continue;
       const entity = dxccService.lookup(qso.call);
       if (entity) worked.add(entity.primaryPrefix);
     }
     setWorkedDxccEntities(worked);
-  }, [vfoFreq, getBandFromFreq, mode]);
+  }, [vfoFreq, getBandFromFreq, mode, dxccIgnoreMode]);
 
   useEffect(() => {
     dxccService.load().then(async () => {
@@ -361,6 +368,10 @@ export default function App() {
 
   const [wavelogEnabled, setWavelogEnabled] = useState<boolean>(() => {
     return localStorage.getItem('ft8_wavelogEnabled') === 'true';
+  });
+  const [autoUploadCloudlog, setAutoUploadCloudlog] = useState<boolean>(() => {
+    const saved = localStorage.getItem('ft8_autoUploadCloudlog');
+    return saved !== null ? saved === 'true' : true;
   });
   const [wavelogUrl, setWavelogUrl] = useState<string>(() => {
     return localStorage.getItem('ft8_wavelogUrl') || '';
@@ -460,10 +471,13 @@ export default function App() {
       localStorage.setItem('ft8_cp2105Channel', cp2105Channel.toString());
       localStorage.setItem('ft8_maxLogEntries', maxLogEntries.toString());
       localStorage.setItem('ft8_wavelogEnabled', String(wavelogEnabled));
+      localStorage.setItem('ft8_autoUploadCloudlog', String(autoUploadCloudlog));
       localStorage.setItem('ft8_wavelogUrl', wavelogUrl);
       localStorage.setItem('ft8_wavelogApiKey', wavelogApiKey);
       localStorage.setItem('ft8_wavelogStationProfileId', wavelogStationProfileId);
-  }, [myCall, myGrid, txFreq, decodeDepth, maxRetries, finalMessageMode, catMode, catBaudRate, icomAddress, civWsUrl, cp2105Channel, maxLogEntries, wavelogEnabled, wavelogUrl, wavelogApiKey, wavelogStationProfileId]);
+      localStorage.setItem('ft8_skipTx1Grid', String(skipTx1Grid));
+      localStorage.setItem('ft8_dxccIgnoreMode', String(dxccIgnoreMode));
+  }, [myCall, myGrid, txFreq, decodeDepth, maxRetries, finalMessageMode, catMode, catBaudRate, icomAddress, civWsUrl, cp2105Channel, maxLogEntries, wavelogEnabled, autoUploadCloudlog, wavelogUrl, wavelogApiKey, wavelogStationProfileId, skipTx1Grid, dxccIgnoreMode]);
 
   // UI State
   const [showSettings, setShowSettings] = useState(false);
@@ -751,6 +765,7 @@ export default function App() {
   }, [autoSequence]);
 
   const wavelogEnabledRef = useRef<boolean>(wavelogEnabled);
+  const autoUploadCloudlogRef = useRef<boolean>(autoUploadCloudlog);
   const wavelogUrlRef = useRef<string>(wavelogUrl);
   const wavelogApiKeyRef = useRef<string>(wavelogApiKey);
   const wavelogStationProfileIdRef = useRef<string>(wavelogStationProfileId);
@@ -758,6 +773,10 @@ export default function App() {
   useEffect(() => {
     wavelogEnabledRef.current = wavelogEnabled;
   }, [wavelogEnabled]);
+
+  useEffect(() => {
+    autoUploadCloudlogRef.current = autoUploadCloudlog;
+  }, [autoUploadCloudlog]);
 
   useEffect(() => {
     wavelogUrlRef.current = wavelogUrl;
@@ -1320,6 +1339,7 @@ export default function App() {
         myPeriod: txPeriod,
         maxRetries,
         finalMessageMode,
+        directReportCall: skipTx1Grid,
         isTxEnabled: txEnabled,
       });
 
@@ -1415,8 +1435,8 @@ export default function App() {
                 (window as any).refreshQsoLogbookUi();
             }
 
-            // Push to cloud instantly if enabled
-            if (wavelogEnabledRef.current && navigator.onLine) {
+            // Push to cloud instantly if enabled (unless the user disabled automatic upload)
+            if (wavelogEnabledRef.current && autoUploadCloudlogRef.current && navigator.onLine) {
                  try {
                      const success = await CloudLogService.pushSingleQSO(qsoRecord, {
                          wavelogEnabled: wavelogEnabledRef.current,
@@ -1451,9 +1471,10 @@ export default function App() {
       fsmRef.current.myPeriod = txPeriod;
       fsmRef.current.maxRetries = maxRetries;
       fsmRef.current.finalMessageMode = finalMessageMode;
+      fsmRef.current.directReportCall = skipTx1Grid;
       fsmRef.current.isTxEnabled = txEnabled;
     }
-  }, [myCall, myGrid, txPeriod, maxRetries, finalMessageMode, txEnabled]);
+  }, [myCall, myGrid, txPeriod, maxRetries, finalMessageMode, skipTx1Grid, txEnabled]);
 
   // Auto-reset state machine if PTT is disabled
   useEffect(() => {
@@ -1810,14 +1831,17 @@ export default function App() {
                               fsmRef.current.targetGrid = null;
                             }
                             if (autoSequence) {
+                              // Seed the report we'll send from the SNR at which we decoded this
+                              // station, so a report-first reply (skipTx1Grid) sends the measured
+                              // value rather than the '-12' fallback.
+                              const snr = log.snr !== undefined ? Math.round(log.snr) : -12;
+                              fsmRef.current.targetReport = snr >= 0
+                                ? `+${String(snr).padStart(2, '0')}`
+                                : `-${String(Math.abs(snr)).padStart(2, '0')}`;
                               const msgContent = log.message.trim().split(/\s+/).slice(2).join(' ').toUpperCase();
                               const reportMatch = msgContent.match(/^R?([+-]\d+)$/);
                               if (reportMatch) {
                                 fsmRef.current.myReceivedReport = reportMatch[1];
-                                const snr = log.snr !== undefined ? Math.round(log.snr) : -12;
-                                fsmRef.current.targetReport = snr >= 0
-                                  ? `+${String(snr).padStart(2, '0')}`
-                                  : `-${String(Math.abs(snr)).padStart(2, '0')}`;
                                 fsmRef.current.updateState('SENDING_R_REPORT', call);
                               } else {
                                 fsmRef.current.updateState('REPLY_SENDING', call);
@@ -1924,14 +1948,17 @@ export default function App() {
                               fsmRef.current.targetGrid = null;
                             }
                             if (autoSequence) {
+                              // Seed the report we'll send from the SNR at which we decoded this
+                              // station, so a report-first reply (skipTx1Grid) sends the measured
+                              // value rather than the '-12' fallback.
+                              const snr = log.snr !== undefined ? Math.round(log.snr) : -12;
+                              fsmRef.current.targetReport = snr >= 0
+                                ? `+${String(snr).padStart(2, '0')}`
+                                : `-${String(Math.abs(snr)).padStart(2, '0')}`;
                               const msgContent = log.message.trim().split(/\s+/).slice(2).join(' ').toUpperCase();
                               const reportMatch = msgContent.match(/^R?([+-]\d+)$/);
                               if (reportMatch) {
                                 fsmRef.current.myReceivedReport = reportMatch[1];
-                                const snr = log.snr !== undefined ? Math.round(log.snr) : -12;
-                                fsmRef.current.targetReport = snr >= 0
-                                  ? `+${String(snr).padStart(2, '0')}`
-                                  : `-${String(Math.abs(snr)).padStart(2, '0')}`;
                                 fsmRef.current.updateState('SENDING_R_REPORT', callsign);
                               } else {
                                 fsmRef.current.updateState('REPLY_SENDING', callsign);
@@ -2068,6 +2095,17 @@ export default function App() {
                 onClick={() => {
                   if (autoSequence && fsmRef.current) {
                     fsmRef.current.targetCall = targetCall;
+                    // Seed the report from the most recent decode of this station so a
+                    // report-first reply (skipTx1Grid) sends the measured SNR, not '-12'.
+                    const lastDecode = [...rxLog].reverse().find(
+                      l => extractTransmitterCallsign(l.message) === targetCall && l.snr !== undefined
+                    );
+                    if (lastDecode) {
+                      const snr = Math.round(lastDecode.snr);
+                      fsmRef.current.targetReport = snr >= 0
+                        ? `+${String(snr).padStart(2, '0')}`
+                        : `-${String(Math.abs(snr)).padStart(2, '0')}`;
+                    }
                     fsmRef.current.updateState('REPLY_SENDING', targetCall);
                     setTxEnabled(true);
                   } else {
@@ -2219,6 +2257,19 @@ export default function App() {
                 </select>
               </div>
 
+              <div className="flex items-center justify-between pt-2">
+                 <div className="flex flex-col">
+                    <label className="text-[10px] uppercase tracking-widest text-text-muted">Skip Grid (TX1)</label>
+                    <span className="text-[9px] text-text-muted">Answer a CQ with the report, not the grid</span>
+                 </div>
+                 <button
+                    onClick={() => setSkipTx1Grid(!skipTx1Grid)}
+                    className={`bg-app border rounded px-3 py-1 text-xs font-mono focus:outline-none transition-colors ${skipTx1Grid ? 'border-[#4caf50] text-[#4caf50]' : 'border-border-input text-text-main'}`}
+                 >
+                    {skipTx1Grid ? 'Enabled' : 'Disabled'}
+                 </button>
+              </div>
+
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] uppercase tracking-widest text-text-muted">Display Last N QSOs</label>
                 <input 
@@ -2303,6 +2354,13 @@ export default function App() {
                   <span className="text-[10px] text-text-muted font-mono leading-tight mt-0.5">
                     ESP32 bridge address, e.g. ws://192.168.16.140/ws-cat
                   </span>
+                  {window.isSecureContext && civWsUrl.startsWith('ws://') && (
+                    <div className="mt-1 p-2 rounded text-[10px] font-mono leading-tight bg-yellow-900/40 border border-yellow-600/50 text-yellow-300">
+                      Mixed content: browsers block ws:// from HTTPS pages.<br/>
+                      Fix: click the lock icon in the address bar → Site settings → Insecure content → Allow.<br/>
+                      Or open this page over HTTP instead of HTTPS.
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -2371,11 +2429,24 @@ export default function App() {
                     <label className="text-[10px] uppercase tracking-widest text-text-muted">Prevent Screen Off</label>
                     <span className="text-[9px] text-text-muted">Requires mobile Wake Lock support</span>
                  </div>
-                 <button 
+                 <button
                     onClick={() => setWakeLockEnabled(!wakeLockEnabled)}
                     className="bg-app border border-border-input text-text-main rounded px-3 py-1 text-xs font-mono focus:outline-none hover:border-[#4caf50]"
                  >
                     {wakeLockEnabled ? 'Enabled' : 'Disabled'}
+                 </button>
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                 <div className="flex flex-col">
+                    <label className="text-[10px] uppercase tracking-widest text-text-muted">DXCC Ignore Mode</label>
+                    <span className="text-[9px] text-text-muted">Count DXCC/callsigns as worked per band, any mode</span>
+                 </div>
+                 <button
+                    onClick={() => setDxccIgnoreMode(!dxccIgnoreMode)}
+                    className={`bg-app border rounded px-3 py-1 text-xs font-mono focus:outline-none transition-colors ${dxccIgnoreMode ? 'border-[#4caf50] text-[#4caf50]' : 'border-border-input text-text-main'}`}
+                 >
+                    {dxccIgnoreMode ? 'Enabled' : 'Disabled'}
                  </button>
               </div>
 
@@ -2392,6 +2463,18 @@ export default function App() {
 
               {wavelogEnabled && (
                 <div className="flex flex-col gap-3 mt-2">
+                  <div className="flex items-center justify-between">
+                     <div className="flex flex-col">
+                        <label className="text-[10px] uppercase tracking-widest text-text-muted">Auto-Upload QSOs</label>
+                        <span className="text-[9px] text-text-muted">Off: store locally only, no automatic push</span>
+                     </div>
+                     <button
+                        onClick={() => setAutoUploadCloudlog(!autoUploadCloudlog)}
+                        className={`bg-app border rounded px-3 py-1 text-xs font-mono focus:outline-none transition-colors ${autoUploadCloudlog ? 'border-[#4caf50] text-[#4caf50]' : 'border-border-input text-text-main'}`}
+                     >
+                        {autoUploadCloudlog ? 'Enabled' : 'Disabled'}
+                     </button>
+                  </div>
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] uppercase tracking-widest text-text-muted">Server URL</label>
                     <input 
