@@ -13,6 +13,8 @@ import { CloudLogService } from './services/CloudLogService';
 import { LogbookService } from './services/LogbookService';
 import { dxccService } from './services/DxccService';
 import { externalStream } from './services/ExternalStreamService';
+import { pskReporter, PSKReporterService } from './services/PSKReporterService';
+import { extractTransmitterCallsign } from './services/pskReporterSpot';
 
 export interface FT8DecodedMessage {
   time: string;
@@ -23,38 +25,6 @@ export interface FT8DecodedMessage {
   isDivider?: boolean;
   isTx?: boolean;
   isIncoming?: boolean;
-}
-
-function extractTransmitterCallsign(message: string): string | null {
-  if (!message) return null;
-  // Strip any prepended arrow indicators like "<- " or "-> "
-  const cleanMsg = message.replace(/^<-?\s+/, '').replace(/^->\s+/, '').trim();
-  const parts = cleanMsg.split(/\s+/).map(p => p.replace(/[<>]/g, ''));
-  
-  if (parts.length === 0) return null;
-  
-  const first = parts[0].toUpperCase();
-  if (first === 'CQ' || first === 'QRZ') {
-    if (parts.length >= 3) {
-      const hasDigit1 = /\d/.test(parts[1]);
-      const hasDigit2 = /\d/.test(parts[2]);
-      if (!hasDigit1 && hasDigit2) {
-        return parts[2];
-      }
-    }
-    if (parts.length >= 2) {
-      return parts[1];
-    }
-    return null;
-  }
-  
-  // For standard QSOs: ADDRESSEE TRANSMITTER [REPORT/MSG]
-  // The transmitter whom we hear is the second token
-  if (parts.length >= 2) {
-    return parts[1];
-  }
-  
-  return parts[0] || null;
 }
 
 // --- Advisory clock-accuracy check (SNTP-style over HTTP) -------------------
@@ -407,6 +377,21 @@ export default function App() {
     return () => { externalStream.onStateChange = () => {}; };
   }, []);
 
+  // PSKReporter spotting — opt-in, off by default. Uses myCall/myGrid identity.
+  const [pskEnabled, setPskEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('ft8_pskEnabled') === 'true';
+  });
+  const [pskSpotsSent, setPskSpotsSent] = useState<number>(0);
+  const pskIdentityValid = PSKReporterService.canReport(myCall, myGrid);
+  useEffect(() => {
+    localStorage.setItem('ft8_pskEnabled', String(pskEnabled));
+    pskReporter.configure(pskEnabled);
+  }, [pskEnabled]);
+  useEffect(() => {
+    pskReporter.onReport = setPskSpotsSent;
+    return () => { pskReporter.onReport = () => {}; };
+  }, []);
+
   const [decodeStats, setDecodeStats] = useState<{ count: number, durationMs: number } | null>(null);
 
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -739,13 +724,18 @@ export default function App() {
 
   // Refs for Worker Access
   const myCallRef = useRef<string>(myCall);
+  const myGridRef = useRef<string>(myGrid);
   const targetCallRef = useRef<string>('');
   const txPeriodRef = useRef<number>(txPeriod);
   const autoSequenceRef = useRef<boolean>(autoSequence);
-  
+
   useEffect(() => {
     myCallRef.current = myCall;
   }, [myCall]);
+
+  useEffect(() => {
+    myGridRef.current = myGrid;
+  }, [myGrid]);
   
   useEffect(() => {
     targetCallRef.current = targetCall;
@@ -972,6 +962,10 @@ export default function App() {
         payload.forEach((msg: FT8DecodedMessage) => { msg.periodIndex = decPeriodIndex; });
 
         externalStream.sendDecodes(payload, vfoFreqRef.current, modeRef.current);
+        pskReporter.reportDecodes(payload, vfoFreqRef.current, modeRef.current, {
+          myCall: myCallRef.current,
+          myGrid: myGridRef.current,
+        });
 
         if (payload.length > 0) {
             setRxLog(prev => {
@@ -2573,6 +2567,34 @@ export default function App() {
                   <div className={`text-xs font-mono ${streamConnected ? 'text-[#4caf50]' : 'text-text-muted'}`}>
                     {streamConnected ? '● Connected' : '○ Not connected (retrying…)'}
                   </div>
+                </div>
+              )}
+
+              <hr className="border-border-subtle my-4" />
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase tracking-widest text-[#8e9299]">Send spots to PSKReporter</h3>
+                <button
+                    onClick={() => pskIdentityValid && setPskEnabled(!pskEnabled)}
+                    disabled={!pskIdentityValid}
+                    title={pskIdentityValid ? '' : 'Set a valid callsign and grid locator first'}
+                    className={`bg-app border rounded px-3 py-1 text-xs font-mono focus:outline-none transition-colors ${!pskIdentityValid ? 'border-border-input text-text-muted opacity-50 cursor-not-allowed' : pskEnabled ? 'border-[#4caf50] text-[#4caf50]' : 'border-border-input text-text-main'}`}
+                 >
+                    {pskEnabled ? 'Enabled' : 'Disabled'}
+                 </button>
+              </div>
+              <p className="text-[10px] text-text-muted leading-relaxed mt-2">
+                Uploads your reception reports (heard callsign + grid) to the
+                PSKReporter spotting network via a relay, using your call
+                <span className="font-mono"> {myCall}</span> and grid
+                <span className="font-mono"> {myGrid}</span> as the reporter identity.
+                Off by default; only standard messages carrying a grid are reported.
+              </p>
+              {!pskIdentityValid && (
+                <span className="text-[10px] text-red-400">Set a valid callsign (not the default) and Maidenhead grid above to enable.</span>
+              )}
+              {pskEnabled && pskIdentityValid && (
+                <div className="text-xs font-mono text-text-muted mt-1">
+                  Spots sent this session: {pskSpotsSent}
                 </div>
               )}
 
