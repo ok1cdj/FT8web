@@ -27,6 +27,51 @@ export interface FT8DecodedMessage {
   isIncoming?: boolean;
 }
 
+// --- Compound-callsign hash persistence ------------------------------------
+// The decode worker's HashCallBook resolves hashed (non-standard) callsigns, but
+// it lives only in worker memory and is lost on reload. We persist the compound
+// callsigns we encounter here (workers have no localStorage) and replay them into
+// a freshly-created worker so "<...>" resolves to the real call right away.
+const HASH_CALLS_KEY = 'ft8_hashcalls';
+const HASH_CALLS_MAX = 200;
+
+function loadPersistedHashCalls(): string[] {
+  try {
+    const raw = localStorage.getItem(HASH_CALLS_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.filter((c: unknown): c is string => typeof c === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Persist compound (contains '/') callsigns for cross-session hash priming. */
+function rememberHashCalls(calls: string[]): void {
+  const compound = calls
+    .map(c => c.replace(/[<>]/g, '').trim().toUpperCase())
+    .filter(c => c.includes('/') && c.length >= 3 && !c.includes('...'));
+  if (compound.length === 0) return;
+  try {
+    const existing = loadPersistedHashCalls();
+    // Most-recent-first, de-duplicated, capped.
+    const merged = [...new Set([...compound, ...existing])].slice(0, HASH_CALLS_MAX);
+    if (merged.length !== existing.length || merged.some((c, i) => c !== existing[i])) {
+      localStorage.setItem(HASH_CALLS_KEY, JSON.stringify(merged));
+    }
+  } catch {
+    /* ignore quota/serialization errors */
+  }
+}
+
+/** Extract callsign-like tokens (including compound ones) from a decoded message. */
+function callsignTokens(message: string): string[] {
+  return message
+    .trim()
+    .split(/\s+/)
+    .map(t => t.replace(/[<>]/g, '').toUpperCase())
+    .filter(t => /[A-Z]/.test(t) && /\d/.test(t) && t !== 'RR73' && !t.includes('...'));
+}
+
 // --- Advisory clock-accuracy check (SNTP-style over HTTP) -------------------
 // FT8 is time-critical. Browsers can't read the system NTP daemon or set the
 // clock, so we measure the device-clock offset against a trusted HTTP time
@@ -949,6 +994,12 @@ export default function App() {
     navigator.mediaDevices.addEventListener('devicechange', getDevices);
 
     const worker = new Worker(new URL('./ft8-worker.ts', import.meta.url), { type: 'module' });
+    // Prime the worker's HashCallBook with our own call plus previously-seen
+    // compound calls so hashed callsigns resolve immediately after a reload.
+    const primeCalls = [...new Set([myCallRef.current, ...loadPersistedHashCalls()].filter(Boolean))];
+    if (primeCalls.length > 0) {
+      worker.postMessage({ type: 'INIT_HASHES', calls: primeCalls });
+    }
     worker.onmessage = (e) => {
       if (e.data.type === 'DECODED') {
         if (e.data.durationMs !== undefined) {
@@ -960,6 +1011,11 @@ export default function App() {
         const _totalSec = _now.getUTCSeconds() + _now.getUTCMilliseconds() / 1000;
         const decPeriodIndex = Math.floor(_totalSec / (modeRef.current === 'FT4' ? 7.5 : 15)) % 2;
         payload.forEach((msg: FT8DecodedMessage) => { msg.periodIndex = decPeriodIndex; });
+
+        // Persist any compound callsigns seen so they resolve after a reload.
+        if (payload.length > 0) {
+          rememberHashCalls(payload.flatMap((msg: FT8DecodedMessage) => callsignTokens(msg.message)));
+        }
 
         externalStream.sendDecodes(payload, vfoFreqRef.current, modeRef.current);
         pskReporter.reportDecodes(payload, vfoFreqRef.current, modeRef.current, {
@@ -1003,23 +1059,21 @@ export default function App() {
         } else if (payload.length > 0) {
             // Route to QSO Log based on rules
             const incomingQsoMessages = payload.filter((msg: FT8DecodedMessage) => {
-                const myCall = myCallRef.current;
-                const targetCall = targetCallRef.current;
-                
-                const parts = msg.message.trim().split(/\s+/);
-                
-                if (myCall && msg.message.includes(myCall)) return true;
-                
+                const myCall = (myCallRef.current || '').replace(/[<>]/g, '').toUpperCase();
+                const targetCall = (targetCallRef.current || '').replace(/[<>]/g, '').toUpperCase();
+
+                // Whole-token, bracket/case-insensitive comparison (a raw substring
+                // test false-matches e.g. OK1CDJ inside OK1CDJX or a grid like JO70).
+                const cleanParts = msg.message.trim().split(/\s+/).map(p => p.replace(/[<>]/g, '').toUpperCase());
+
+                if (myCall && cleanParts.some(p => p === myCall)) return true;
+
                 if (targetCall) {
-                    // Normalize parts to remove hashed call brackets like <W1AW> if present
-                    const cleanParts = parts.map(p => p.replace(/[<>]/g, ''));
-                    
-                    // Check if target is the transmitter (Source)
+                    // Target is the transmitter (2nd token), or CQ/QRZ ... <target>.
                     if (cleanParts.length >= 2 && cleanParts[1] === targetCall) return true;
-                    // CQ/QRZ with modifier format: CQ DX W1AW FN34
                     if (cleanParts.length >= 3 && (cleanParts[0] === 'CQ' || cleanParts[0] === 'QRZ') && cleanParts[2] === targetCall) return true;
                 }
-                
+
                 return false;
             }).map((msg: FT8DecodedMessage) => ({ ...msg, message: "<- " + msg.message, isIncoming: true }));
             
@@ -1469,6 +1523,15 @@ export default function App() {
       fsmRef.current.isTxEnabled = txEnabled;
     }
   }, [myCall, myGrid, txPeriod, maxRetries, finalMessageMode, skipTx1Grid, txEnabled]);
+
+  // Teach the decode worker our own callsign so incoming replies addressed to a
+  // hash of our (possibly compound) call resolve to us instead of "<...>".
+  useEffect(() => {
+    if (workerRef.current && myCall) {
+      workerRef.current.postMessage({ type: 'INIT_HASHES', calls: [myCall] });
+      if (myCall.includes('/')) rememberHashCalls([myCall]);
+    }
+  }, [myCall]);
 
   // Auto-reset state machine if PTT is disabled
   useEffect(() => {
