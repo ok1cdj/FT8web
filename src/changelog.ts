@@ -24,6 +24,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     ],
     fixes: [
       'Compound-callsign QSOs no longer skip the signal report or stall before completing.',
+      'Answering another station’s CQ with a compound call now sends your full call first, so the other operator can decode who is calling.',
       'More reliable handling of hashed callsigns (shown as <…>) while a compound call is still being learned on the band.',
     ],
   },

@@ -264,7 +264,16 @@ export default class FT8FSM {
                     : `CQ ${this.myCall}`;
                 break;
             case 'REPLY_SENDING':
-                if (this.directReportCall) {
+                if (!this.isStandardCall(this.myCall)) {
+                    // Answering a CQ with a compound call: our FIRST transmission must
+                    // carry our call IN FULL so the far end learns its hash. A hashed
+                    // <ourcall> here would be unresolvable to them — they have never
+                    // heard us (unlike when we call CQ, which seeds the hash). This
+                    // packs as a Type-4 frame (the standard target is hashed, our call
+                    // rides in full) and cannot carry a grid. Once they reply — proving
+                    // they learned us — the RX side advances us to the report handshake.
+                    txString = `<${this.normalizeCall(this.targetCall)}> ${this.myCall.trim()}`;
+                } else if (this.directReportCall) {
                     // User opted to skip the grid (TX1) and send the report directly.
                     txString = `${this.renderCall(this.targetCall)} ${this.renderCall(this.myCall)} ${this.targetReport || '-12'}`;
                     this.currentState = 'SENDING_REPORT';
