@@ -516,20 +516,37 @@ export default function App() {
   const [showAbout, setShowAbout] = useState(false);
   const [whatsNewEntries, setWhatsNewEntries] = useState<ChangelogEntry[]>([]);
 
+  // Captured during the first render — BEFORE the settings-persistence effects run
+  // — so we can tell a returning user (already has ft8_* settings) from a brand-new
+  // one. This is what makes the dialog appear for existing users on the very first
+  // build that ships it (they have no ft8_lastSeenUpdate key yet).
+  const isReturningUserRef = useRef(
+    typeof localStorage !== 'undefined' &&
+    Object.keys(localStorage).some(k => k.startsWith('ft8_') && k !== 'ft8_lastSeenUpdate')
+  );
+
   // Show the "What's New" dialog once when a returning user loads a newer build.
   useEffect(() => {
     if (!LATEST_UPDATE) return;
     const lastSeen = localStorage.getItem('ft8_lastSeenUpdate');
     if (lastSeen === LATEST_UPDATE) return;
-    if (lastSeen === null) {
-      // First-ever visit: nothing to catch up on — just record the current build.
-      localStorage.setItem('ft8_lastSeenUpdate', LATEST_UPDATE);
+
+    if (lastSeen !== null) {
+      // Returning user: show every entry newer than the one they last saw. If the
+      // stored date is unknown (older than the changelog), show just the latest.
+      const idx = CHANGELOG.findIndex(e => e.date === lastSeen);
+      setWhatsNewEntries(idx > 0 ? CHANGELOG.slice(0, idx) : [CHANGELOG[0]]);
       return;
     }
-    // Returning user: show every entry newer than the one they last saw. If the
-    // stored date is unknown (older than the changelog), show just the latest.
-    const idx = CHANGELOG.findIndex(e => e.date === lastSeen);
-    setWhatsNewEntries(idx > 0 ? CHANGELOG.slice(0, idx) : [CHANGELOG[0]]);
+
+    // No stored marker yet.
+    if (isReturningUserRef.current) {
+      // Existing user meeting this feature for the first time -> show latest notes.
+      setWhatsNewEntries([CHANGELOG[0]]);
+    } else {
+      // Brand-new user: nothing to catch up on — record the current build silently.
+      localStorage.setItem('ft8_lastSeenUpdate', LATEST_UPDATE);
+    }
   }, []);
 
   const closeWhatsNew = useCallback(() => {
