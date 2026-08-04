@@ -8,6 +8,8 @@ import FT8FSM, { QueuedCaller } from './FT8FSM';
 
 import { LogBookViewer } from './components/LogBookViewer';
 import { VersionInfo } from './components/VersionInfo';
+import { WhatsNewModal } from './components/WhatsNewModal';
+import { CHANGELOG, LATEST_UPDATE, type ChangelogEntry } from './changelog';
 import { logBook, QSO } from './LogBook';
 import { CloudLogService } from './services/CloudLogService';
 import { LogbookService } from './services/LogbookService';
@@ -512,6 +514,28 @@ export default function App() {
   // UI State
   const [showSettings, setShowSettings] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
+  const [whatsNewEntries, setWhatsNewEntries] = useState<ChangelogEntry[]>([]);
+
+  // Show the "What's New" dialog once when a returning user loads a newer build.
+  useEffect(() => {
+    if (!LATEST_UPDATE) return;
+    const lastSeen = localStorage.getItem('ft8_lastSeenUpdate');
+    if (lastSeen === LATEST_UPDATE) return;
+    if (lastSeen === null) {
+      // First-ever visit: nothing to catch up on — just record the current build.
+      localStorage.setItem('ft8_lastSeenUpdate', LATEST_UPDATE);
+      return;
+    }
+    // Returning user: show every entry newer than the one they last saw. If the
+    // stored date is unknown (older than the changelog), show just the latest.
+    const idx = CHANGELOG.findIndex(e => e.date === lastSeen);
+    setWhatsNewEntries(idx > 0 ? CHANGELOG.slice(0, idx) : [CHANGELOG[0]]);
+  }, []);
+
+  const closeWhatsNew = useCallback(() => {
+    localStorage.setItem('ft8_lastSeenUpdate', LATEST_UPDATE);
+    setWhatsNewEntries([]);
+  }, []);
   const [serialPort, setSerialPort] = useState<any>(null);
   const [catTestResult, setCatTestResult] = useState<string | null>(null);
   const [catConnected, setCatConnected] = useState<boolean>(false);
@@ -2804,6 +2828,10 @@ export default function App() {
         </div>
       )}
       
+      {whatsNewEntries.length > 0 && (
+        <WhatsNewModal entries={whatsNewEntries} onClose={closeWhatsNew} />
+      )}
+
       <VersionInfo />
     </div>
   );
