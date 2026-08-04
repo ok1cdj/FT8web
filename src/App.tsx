@@ -8,11 +8,15 @@ import FT8FSM, { QueuedCaller } from './FT8FSM';
 
 import { LogBookViewer } from './components/LogBookViewer';
 import { VersionInfo } from './components/VersionInfo';
+import { WhatsNewModal } from './components/WhatsNewModal';
+import { CHANGELOG, LATEST_UPDATE, type ChangelogEntry } from './changelog';
 import { logBook, QSO } from './LogBook';
 import { CloudLogService } from './services/CloudLogService';
 import { LogbookService } from './services/LogbookService';
 import { dxccService } from './services/DxccService';
 import { externalStream } from './services/ExternalStreamService';
+import { pskReporter, PSKReporterService } from './services/PSKReporterService';
+import { extractTransmitterCallsign } from './services/pskReporterSpot';
 
 export interface FT8DecodedMessage {
   time: string;
@@ -25,36 +29,49 @@ export interface FT8DecodedMessage {
   isIncoming?: boolean;
 }
 
-function extractTransmitterCallsign(message: string): string | null {
-  if (!message) return null;
-  // Strip any prepended arrow indicators like "<- " or "-> "
-  const cleanMsg = message.replace(/^<-?\s+/, '').replace(/^->\s+/, '').trim();
-  const parts = cleanMsg.split(/\s+/).map(p => p.replace(/[<>]/g, ''));
-  
-  if (parts.length === 0) return null;
-  
-  const first = parts[0].toUpperCase();
-  if (first === 'CQ' || first === 'QRZ') {
-    if (parts.length >= 3) {
-      const hasDigit1 = /\d/.test(parts[1]);
-      const hasDigit2 = /\d/.test(parts[2]);
-      if (!hasDigit1 && hasDigit2) {
-        return parts[2];
-      }
-    }
-    if (parts.length >= 2) {
-      return parts[1];
-    }
-    return null;
+// --- Compound-callsign hash persistence ------------------------------------
+// The decode worker's HashCallBook resolves hashed (non-standard) callsigns, but
+// it lives only in worker memory and is lost on reload. We persist the compound
+// callsigns we encounter here (workers have no localStorage) and replay them into
+// a freshly-created worker so "<...>" resolves to the real call right away.
+const HASH_CALLS_KEY = 'ft8_hashcalls';
+const HASH_CALLS_MAX = 200;
+
+function loadPersistedHashCalls(): string[] {
+  try {
+    const raw = localStorage.getItem(HASH_CALLS_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.filter((c: unknown): c is string => typeof c === 'string') : [];
+  } catch {
+    return [];
   }
-  
-  // For standard QSOs: ADDRESSEE TRANSMITTER [REPORT/MSG]
-  // The transmitter whom we hear is the second token
-  if (parts.length >= 2) {
-    return parts[1];
+}
+
+/** Persist compound (contains '/') callsigns for cross-session hash priming. */
+function rememberHashCalls(calls: string[]): void {
+  const compound = calls
+    .map(c => c.replace(/[<>]/g, '').trim().toUpperCase())
+    .filter(c => c.includes('/') && c.length >= 3 && !c.includes('...'));
+  if (compound.length === 0) return;
+  try {
+    const existing = loadPersistedHashCalls();
+    // Most-recent-first, de-duplicated, capped.
+    const merged = [...new Set([...compound, ...existing])].slice(0, HASH_CALLS_MAX);
+    if (merged.length !== existing.length || merged.some((c, i) => c !== existing[i])) {
+      localStorage.setItem(HASH_CALLS_KEY, JSON.stringify(merged));
+    }
+  } catch {
+    /* ignore quota/serialization errors */
   }
-  
-  return parts[0] || null;
+}
+
+/** Extract callsign-like tokens (including compound ones) from a decoded message. */
+function callsignTokens(message: string): string[] {
+  return message
+    .trim()
+    .split(/\s+/)
+    .map(t => t.replace(/[<>]/g, '').toUpperCase())
+    .filter(t => /[A-Z]/.test(t) && /\d/.test(t) && t !== 'RR73' && !t.includes('...'));
 }
 
 // --- Advisory clock-accuracy check (SNTP-style over HTTP) -------------------
@@ -407,6 +424,21 @@ export default function App() {
     return () => { externalStream.onStateChange = () => {}; };
   }, []);
 
+  // PSKReporter spotting — opt-in, off by default. Uses myCall/myGrid identity.
+  const [pskEnabled, setPskEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('ft8_pskEnabled') === 'true';
+  });
+  const [pskSpotsSent, setPskSpotsSent] = useState<number>(0);
+  const pskIdentityValid = PSKReporterService.canReport(myCall, myGrid);
+  useEffect(() => {
+    localStorage.setItem('ft8_pskEnabled', String(pskEnabled));
+    pskReporter.configure(pskEnabled);
+  }, [pskEnabled]);
+  useEffect(() => {
+    pskReporter.onReport = setPskSpotsSent;
+    return () => { pskReporter.onReport = () => {}; };
+  }, []);
+
   const [decodeStats, setDecodeStats] = useState<{ count: number, durationMs: number } | null>(null);
 
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -482,6 +514,45 @@ export default function App() {
   // UI State
   const [showSettings, setShowSettings] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
+  const [whatsNewEntries, setWhatsNewEntries] = useState<ChangelogEntry[]>([]);
+
+  // Captured during the first render — BEFORE the settings-persistence effects run
+  // — so we can tell a returning user (already has ft8_* settings) from a brand-new
+  // one. This is what makes the dialog appear for existing users on the very first
+  // build that ships it (they have no ft8_lastSeenUpdate key yet).
+  const isReturningUserRef = useRef(
+    typeof localStorage !== 'undefined' &&
+    Object.keys(localStorage).some(k => k.startsWith('ft8_') && k !== 'ft8_lastSeenUpdate')
+  );
+
+  // Show the "What's New" dialog once when a returning user loads a newer build.
+  useEffect(() => {
+    if (!LATEST_UPDATE) return;
+    const lastSeen = localStorage.getItem('ft8_lastSeenUpdate');
+    if (lastSeen === LATEST_UPDATE) return;
+
+    if (lastSeen !== null) {
+      // Returning user: show every entry newer than the one they last saw. If the
+      // stored date is unknown (older than the changelog), show just the latest.
+      const idx = CHANGELOG.findIndex(e => e.date === lastSeen);
+      setWhatsNewEntries(idx > 0 ? CHANGELOG.slice(0, idx) : [CHANGELOG[0]]);
+      return;
+    }
+
+    // No stored marker yet.
+    if (isReturningUserRef.current) {
+      // Existing user meeting this feature for the first time -> show latest notes.
+      setWhatsNewEntries([CHANGELOG[0]]);
+    } else {
+      // Brand-new user: nothing to catch up on — record the current build silently.
+      localStorage.setItem('ft8_lastSeenUpdate', LATEST_UPDATE);
+    }
+  }, []);
+
+  const closeWhatsNew = useCallback(() => {
+    localStorage.setItem('ft8_lastSeenUpdate', LATEST_UPDATE);
+    setWhatsNewEntries([]);
+  }, []);
   const [serialPort, setSerialPort] = useState<any>(null);
   const [catTestResult, setCatTestResult] = useState<string | null>(null);
   const [catConnected, setCatConnected] = useState<boolean>(false);
@@ -739,13 +810,18 @@ export default function App() {
 
   // Refs for Worker Access
   const myCallRef = useRef<string>(myCall);
+  const myGridRef = useRef<string>(myGrid);
   const targetCallRef = useRef<string>('');
   const txPeriodRef = useRef<number>(txPeriod);
   const autoSequenceRef = useRef<boolean>(autoSequence);
-  
+
   useEffect(() => {
     myCallRef.current = myCall;
   }, [myCall]);
+
+  useEffect(() => {
+    myGridRef.current = myGrid;
+  }, [myGrid]);
   
   useEffect(() => {
     targetCallRef.current = targetCall;
@@ -959,6 +1035,12 @@ export default function App() {
     navigator.mediaDevices.addEventListener('devicechange', getDevices);
 
     const worker = new Worker(new URL('./ft8-worker.ts', import.meta.url), { type: 'module' });
+    // Prime the worker's HashCallBook with our own call plus previously-seen
+    // compound calls so hashed callsigns resolve immediately after a reload.
+    const primeCalls = [...new Set([myCallRef.current, ...loadPersistedHashCalls()].filter(Boolean))];
+    if (primeCalls.length > 0) {
+      worker.postMessage({ type: 'INIT_HASHES', calls: primeCalls });
+    }
     worker.onmessage = (e) => {
       if (e.data.type === 'DECODED') {
         if (e.data.durationMs !== undefined) {
@@ -971,7 +1053,16 @@ export default function App() {
         const decPeriodIndex = Math.floor(_totalSec / (modeRef.current === 'FT4' ? 7.5 : 15)) % 2;
         payload.forEach((msg: FT8DecodedMessage) => { msg.periodIndex = decPeriodIndex; });
 
+        // Persist any compound callsigns seen so they resolve after a reload.
+        if (payload.length > 0) {
+          rememberHashCalls(payload.flatMap((msg: FT8DecodedMessage) => callsignTokens(msg.message)));
+        }
+
         externalStream.sendDecodes(payload, vfoFreqRef.current, modeRef.current);
+        pskReporter.reportDecodes(payload, vfoFreqRef.current, modeRef.current, {
+          myCall: myCallRef.current,
+          myGrid: myGridRef.current,
+        });
 
         if (payload.length > 0) {
             setRxLog(prev => {
@@ -1009,23 +1100,21 @@ export default function App() {
         } else if (payload.length > 0) {
             // Route to QSO Log based on rules
             const incomingQsoMessages = payload.filter((msg: FT8DecodedMessage) => {
-                const myCall = myCallRef.current;
-                const targetCall = targetCallRef.current;
-                
-                const parts = msg.message.trim().split(/\s+/);
-                
-                if (myCall && msg.message.includes(myCall)) return true;
-                
+                const myCall = (myCallRef.current || '').replace(/[<>]/g, '').toUpperCase();
+                const targetCall = (targetCallRef.current || '').replace(/[<>]/g, '').toUpperCase();
+
+                // Whole-token, bracket/case-insensitive comparison (a raw substring
+                // test false-matches e.g. OK1CDJ inside OK1CDJX or a grid like JO70).
+                const cleanParts = msg.message.trim().split(/\s+/).map(p => p.replace(/[<>]/g, '').toUpperCase());
+
+                if (myCall && cleanParts.some(p => p === myCall)) return true;
+
                 if (targetCall) {
-                    // Normalize parts to remove hashed call brackets like <W1AW> if present
-                    const cleanParts = parts.map(p => p.replace(/[<>]/g, ''));
-                    
-                    // Check if target is the transmitter (Source)
+                    // Target is the transmitter (2nd token), or CQ/QRZ ... <target>.
                     if (cleanParts.length >= 2 && cleanParts[1] === targetCall) return true;
-                    // CQ/QRZ with modifier format: CQ DX W1AW FN34
                     if (cleanParts.length >= 3 && (cleanParts[0] === 'CQ' || cleanParts[0] === 'QRZ') && cleanParts[2] === targetCall) return true;
                 }
-                
+
                 return false;
             }).map((msg: FT8DecodedMessage) => ({ ...msg, message: "<- " + msg.message, isIncoming: true }));
             
@@ -1475,6 +1564,15 @@ export default function App() {
       fsmRef.current.isTxEnabled = txEnabled;
     }
   }, [myCall, myGrid, txPeriod, maxRetries, finalMessageMode, skipTx1Grid, txEnabled]);
+
+  // Teach the decode worker our own callsign so incoming replies addressed to a
+  // hash of our (possibly compound) call resolve to us instead of "<...>".
+  useEffect(() => {
+    if (workerRef.current && myCall) {
+      workerRef.current.postMessage({ type: 'INIT_HASHES', calls: [myCall] });
+      if (myCall.includes('/')) rememberHashCalls([myCall]);
+    }
+  }, [myCall]);
 
   // Auto-reset state machine if PTT is disabled
   useEffect(() => {
@@ -2577,6 +2675,34 @@ export default function App() {
               )}
 
               <hr className="border-border-subtle my-4" />
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase tracking-widest text-[#8e9299]">Send spots to PSKReporter</h3>
+                <button
+                    onClick={() => pskIdentityValid && setPskEnabled(!pskEnabled)}
+                    disabled={!pskIdentityValid}
+                    title={pskIdentityValid ? '' : 'Set a valid callsign and grid locator first'}
+                    className={`bg-app border rounded px-3 py-1 text-xs font-mono focus:outline-none transition-colors ${!pskIdentityValid ? 'border-border-input text-text-muted opacity-50 cursor-not-allowed' : pskEnabled ? 'border-[#4caf50] text-[#4caf50]' : 'border-border-input text-text-main'}`}
+                 >
+                    {pskEnabled ? 'Enabled' : 'Disabled'}
+                 </button>
+              </div>
+              <p className="text-[10px] text-text-muted leading-relaxed mt-2">
+                Uploads your reception reports (heard callsign + grid) to the
+                PSKReporter spotting network via a relay, using your call
+                <span className="font-mono"> {myCall}</span> and grid
+                <span className="font-mono"> {myGrid}</span> as the reporter identity.
+                Off by default; only standard messages carrying a grid are reported.
+              </p>
+              {!pskIdentityValid && (
+                <span className="text-[10px] text-red-400">Set a valid callsign (not the default) and Maidenhead grid above to enable.</span>
+              )}
+              {pskEnabled && pskIdentityValid && (
+                <div className="text-xs font-mono text-text-muted mt-1">
+                  Spots sent this session: {pskSpotsSent}
+                </div>
+              )}
+
+              <hr className="border-border-subtle my-4" />
 
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] uppercase tracking-widest text-text-muted">Audio Input (RX)</label>
@@ -2719,6 +2845,10 @@ export default function App() {
         </div>
       )}
       
+      {whatsNewEntries.length > 0 && (
+        <WhatsNewModal entries={whatsNewEntries} onClose={closeWhatsNew} />
+      )}
+
       <VersionInfo />
     </div>
   );

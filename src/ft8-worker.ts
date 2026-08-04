@@ -4,6 +4,18 @@ import { decodeFT8, decodeFT4, HashCallBook } from '@e04/ft8ts';
 const hashCallBook = new HashCallBook();
 
 self.onmessage = (e: MessageEvent) => {
+  // Prime the hash book with known callsigns (our own call, previously worked
+  // compound calls) so hashed/non-standard callsigns resolve immediately instead
+  // of showing as "<...>" until the far end re-primes the hash. Persistence lives
+  // on the main thread (workers have no localStorage); it replays the list here.
+  if (e.data && e.data.type === 'INIT_HASHES') {
+    const calls: string[] = Array.isArray(e.data.calls) ? e.data.calls : [];
+    for (const c of calls) {
+      if (typeof c === 'string' && c.trim()) hashCallBook.save(c);
+    }
+    return;
+  }
+
   const { audioData, sampleRate, nowString, decodeDepth = 2, mode = 'FT8' } = e.data;
 
   try {

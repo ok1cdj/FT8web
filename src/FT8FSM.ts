@@ -81,10 +81,103 @@ export default class FT8FSM {
         this.isTxEnabled = config.isTxEnabled || false;
     }
 
-    private isNonStandardCompound(call: string): boolean {
-        if (!call.includes('/')) return false;
-        const upper = call.toUpperCase();
-        return !upper.endsWith('/R') && !upper.endsWith('/P');
+    /**
+     * True when `call` can be packed as a standard FT8 Type-1 callsign.
+     * Mirrors parseCallsign() in @e04/ft8ts (pack_jt77.ts): a /R or /P suffix is
+     * allowed, but any other '/' (a compound call like OE/OK1CDJ) or an unusual
+     * call-area-digit position makes it non-standard and forces Type-4 (hashed)
+     * encoding, which cannot carry a grid or a numeric signal report.
+     */
+    private isStandardCall(raw: string | null): boolean {
+        let call = (raw || '').trim().toUpperCase();
+        if (call.endsWith('/R')) call = call.slice(0, -2);
+        if (call.endsWith('/P')) call = call.slice(0, -2);
+
+        const isLetter = (c: string) => c >= 'A' && c <= 'Z';
+        const isDigit = (c: string) => c >= '0' && c <= '9';
+
+        // Find the call-area digit (last digit in the call, not at index 0).
+        let iarea = -1;
+        for (let i = call.length - 1; i >= 1; i--) {
+            if (isDigit(call[i] ?? '')) { iarea = i; break; }
+        }
+        if (iarea < 1) return false;
+
+        let npdig = 0, nplet = 0;
+        for (let i = 0; i < iarea; i++) {
+            if (isDigit(call[i] ?? '')) npdig++;
+            if (isLetter(call[i] ?? '')) nplet++;
+        }
+        let nslet = 0;
+        for (let i = iarea + 1; i < call.length; i++) {
+            if (isLetter(call[i] ?? '')) nslet++;
+        }
+        return iarea >= 1 && iarea <= 2 && nplet >= 1 && npdig < iarea && nslet <= 3;
+    }
+
+    /** Strip <> brackets, whitespace and case so two callsign tokens can be compared. */
+    private normalizeCall(raw: string | null): string {
+        return (raw || '').replace(/[<>]/g, '').trim().toUpperCase();
+    }
+
+    /** Whitespace/bracket/case-insensitive callsign equality. */
+    private callsMatch(a: string | null, b: string | null): boolean {
+        const na = this.normalizeCall(a);
+        const nb = this.normalizeCall(b);
+        return na !== '' && na === nb;
+    }
+
+    /** True when BOTH sides are non-standard — unsupported in v1 (cannot exchange). */
+    private bothNonStandard(): boolean {
+        return !this.isStandardCall(this.myCall) && !this.isStandardCall(this.targetCall);
+    }
+
+    /**
+     * Render a callsign for a QSO message. Standard calls are sent verbatim; a
+     * non-standard (compound) call is sent as its hash `<CALL>` so the message
+     * packs as a normal Type-1 frame that can carry a grid or a signal report.
+     * The full compound call travels only in the CQ (Type 4), which seeds the
+     * hash on every receiver so these `<CALL>` references resolve.
+     */
+    private renderCall(call: string | null): string {
+        if (this.isStandardCall(call)) return (call || '').trim();
+        return `<${this.normalizeCall(call)}>`;
+    }
+
+    /**
+     * Log the current QSO and either pick up the next queued caller or return to
+     * IDLE. Shared by the RX "plain 73 received" path and the TX "sent RR73/73"
+     * path so the completion logic lives in one place.
+     */
+    private logCurrentQsoAndAdvance(): void {
+        if (this.targetCall) {
+            this.onLogQSO({
+                call: this.targetCall,
+                grid: this.targetGrid,
+                rst_sent: this.targetReport,
+                rst_rcvd: this.myReceivedReport,
+            });
+        }
+
+        if (this.callerQueue.length > 0) {
+            const next = this.callerQueue.shift()!;
+            this.targetCall = next.callsign;
+            this.targetGrid = next.grid;
+            this.myReceivedReport = next.report || null;
+            const snr = next.receivedSnr ?? -12;
+            const formattedSnr = snr >= 0
+                ? `+${String(snr).padStart(2, '0')}`
+                : `-${String(Math.abs(snr)).padStart(2, '0')}`;
+            this.targetReport = formattedSnr;
+            // If the caller already sent us a report, skip the grid exchange and go
+            // straight to the R-report; otherwise start the normal report handshake.
+            this.currentState = next.report != null ? 'SENDING_R_REPORT' : 'SENDING_REPORT';
+            this.retryCount = 0;
+            this.hasTransmittedThisQso = false;
+            this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
+        } else {
+            this.resetToIdle();
+        }
     }
 
     private _gridToLatLon(str: string | null) {
@@ -146,6 +239,16 @@ export default class FT8FSM {
         const periodIndex = currentPeriod % 2;
         if (periodIndex !== this.myPeriod) return;
 
+        // v1 does not support QSOs where BOTH calls are non-standard: FT8 cannot
+        // carry two hashed callsigns in one message, so the message would fall back
+        // to free text. Skip transmitting rather than emit garbage. (CQ only ever
+        // involves our own call, so it is unaffected.)
+        if (this.currentState !== 'IDLE' && this.currentState !== 'CQ_SENDING' && this.bothNonStandard()) {
+            this.onAppendQsoLog(`[SKIP: both calls non-standard — unsupported]`, false, true);
+            this.resetToIdle();
+            return;
+        }
+
         let txString: string | null = null;
         let completeQso = false;
 
@@ -153,38 +256,52 @@ export default class FT8FSM {
             case 'IDLE':
                 break;
             case 'CQ_SENDING':
-                txString = `CQ ${this.myCall} ${(this.myGrid || '').substring(0, 4)}`;
+                // The CQ is the only message that carries the compound call in full
+                // (Type 4) — it seeds our hash on every receiver. A Type-4 CQ cannot
+                // carry a grid, so drop it for a non-standard call.
+                txString = this.isStandardCall(this.myCall)
+                    ? `CQ ${this.myCall} ${(this.myGrid || '').substring(0, 4)}`.trim()
+                    : `CQ ${this.myCall}`;
                 break;
             case 'REPLY_SENDING':
-                if (this.directReportCall || this.isNonStandardCompound(this.myCall) || this.isNonStandardCompound(this.targetCall || '')) {
-                    // Skip the grid (TX1) and send the report directly when either the user opted in
-                    // (directReportCall), or a compound callsign would exceed the 13-char free-text
-                    // limit if the grid were included.
-                    txString = `${this.targetCall} ${this.myCall} ${this.targetReport || '-12'}`;
+                if (!this.isStandardCall(this.myCall)) {
+                    // Answering a CQ with a compound call: our FIRST transmission must
+                    // carry our call IN FULL so the far end learns its hash. A hashed
+                    // <ourcall> here would be unresolvable to them — they have never
+                    // heard us (unlike when we call CQ, which seeds the hash). This
+                    // packs as a Type-4 frame (the standard target is hashed, our call
+                    // rides in full) and cannot carry a grid. Once they reply — proving
+                    // they learned us — the RX side advances us to the report handshake.
+                    txString = `<${this.normalizeCall(this.targetCall)}> ${this.myCall.trim()}`;
+                } else if (this.directReportCall) {
+                    // User opted to skip the grid (TX1) and send the report directly.
+                    txString = `${this.renderCall(this.targetCall)} ${this.renderCall(this.myCall)} ${this.targetReport || '-12'}`;
                     this.currentState = 'SENDING_REPORT';
                     this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
                 } else {
-                    txString = `${this.targetCall} ${this.myCall} ${(this.myGrid || '').substring(0, 4)}`.trim();
+                    txString = `${this.renderCall(this.targetCall)} ${this.renderCall(this.myCall)} ${(this.myGrid || '').substring(0, 4)}`.trim();
                 }
                 break;
-            case 'SENDING_REPORT':
+            case 'SENDING_REPORT': {
                 const repVal = this.targetReport || '-12';
-                txString = `${this.targetCall} ${this.myCall} ${repVal}`;
+                txString = `${this.renderCall(this.targetCall)} ${this.renderCall(this.myCall)} ${repVal}`;
                 break;
-            case 'SENDING_R_REPORT':
+            }
+            case 'SENDING_R_REPORT': {
                 const repValR = this.targetReport || '-12';
                 const rPrefix = repValR.startsWith('R') ? '' : 'R';
-                txString = `${this.targetCall} ${this.myCall} ${rPrefix}${repValR}`;
+                txString = `${this.renderCall(this.targetCall)} ${this.renderCall(this.myCall)} ${rPrefix}${repValR}`;
                 break;
+            }
             case 'SENDING_RRR':
-                txString = `${this.targetCall} ${this.myCall} RRR`;
+                txString = `${this.renderCall(this.targetCall)} ${this.renderCall(this.myCall)} RRR`;
                 break;
             case 'SENDING_RR73':
-                txString = `${this.targetCall} ${this.myCall} RR73`;
+                txString = `${this.renderCall(this.targetCall)} ${this.renderCall(this.myCall)} RR73`;
                 completeQso = true;
                 break;
             case 'SENDING_73':
-                txString = `${this.targetCall} ${this.myCall} 73`;
+                txString = `${this.renderCall(this.targetCall)} ${this.renderCall(this.myCall)} 73`;
                 completeQso = true;
                 break;
         }
@@ -198,34 +315,7 @@ export default class FT8FSM {
             // Advance logic if we sent final closure
             if (completeQso) {
                 this.onAppendQsoLog(`[QSO COMPLETE w/ ${this.targetCall}]`, false, true);
-                if (this.targetCall) {
-                    this.onLogQSO({
-                        call: this.targetCall,
-                        grid: this.targetGrid,
-                        rst_sent: this.targetReport,
-                        rst_rcvd: this.myReceivedReport
-                    });
-                }
-                
-                // Immediately pick up the next queued caller, or go back to IDLE
-                if (this.callerQueue.length > 0) {
-                     const next = this.callerQueue.shift()!;
-                     this.targetCall = next.callsign;
-                     this.targetGrid = next.grid;
-                     this.myReceivedReport = next.report || null;
-                     const snr = next.receivedSnr ?? (Math.floor(Math.random() * 15) - 20);
-                     const formattedSnr = snr >= 0
-                         ? `+${String(snr).padStart(2, '0')}`
-                         : `-${String(Math.abs(snr)).padStart(2, '0')}`;
-                     this.targetReport = formattedSnr;
-                     // If caller already sent us a report, skip grid exchange and go straight to R-report
-                     this.currentState = next.report != null ? 'SENDING_R_REPORT' : 'SENDING_REPORT';
-                     this.retryCount = 0;
-                     this.hasTransmittedThisQso = false;
-                     this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
-                } else {
-                     this.resetToIdle();
-                }
+                this.logCurrentQsoAndAdvance();
             }
         }
     }
@@ -245,10 +335,25 @@ export default class FT8FSM {
         decodedMessagesArray.forEach(msgObj => {
             const line = msgObj.message;
             this.onAppendGlobalLog(line);
-            
-            const involvesMe = line.includes(this.myCall);
-            const involvesTarget = this.targetCall && line.includes(this.targetCall);
-            
+
+            // Whole-token, bracket/case-insensitive matching (a raw substring test
+            // would false-match e.g. OK1CDJ inside OK1CDJX or a grid like JO70).
+            const parts = line.trim().split(/\s+/);
+            const addressee = this.normalizeCall(parts[0]);
+            const sender = parts.length >= 2 ? this.normalizeCall(parts[1]) : '';
+            const msgContent = parts.slice(2).join(' ').trim();
+
+            // A hashed callsign the decoder cannot resolve yet shows as "<...>".
+            // Mid-QSO, a message from our target addressed to an unresolved hash is
+            // almost certainly aimed at us (the far end hasn't learned our call).
+            const addresseeUnresolved = addressee === '...';
+            const senderIsTarget = this.callsMatch(sender, this.targetCall);
+            const addressedToMe = this.callsMatch(addressee, this.myCall)
+                || (addresseeUnresolved && senderIsTarget && this.currentState !== 'IDLE');
+
+            const involvesMe = addressedToMe || parts.some(p => this.callsMatch(p, this.myCall));
+            const involvesTarget = !!this.targetCall && parts.some(p => this.callsMatch(p, this.targetCall));
+
             if (involvesMe || involvesTarget) {
                 if (!qsoDividerAppended) {
                     this.onAppendQsoLog(divider, false, true);
@@ -258,14 +363,9 @@ export default class FT8FSM {
             }
 
             // Stateful message evaluation
-            const parts = line.trim().split(/\s+/);
             if (parts.length >= 2) {
-                const addressee = parts[0].replace(/[<>]/g, '');
-                const sender = parts[1].replace(/[<>]/g, '');
-                const msgContent = parts.slice(2).join(' ').trim();
-
-                if (addressee === this.myCall) {
-                    if (sender === this.targetCall) {
+                if (addressedToMe) {
+                    if (senderIsTarget) {
                         targetResponded = true;
                         this.retryCount = 0;
 
@@ -281,40 +381,15 @@ export default class FT8FSM {
                         const hasRRR = /\bRRR\b/.test(upperContent);
                         const has73 = /\b73\b/.test(upperContent);
 
-                        if (hasRR73 || hasRRR || has73) {
-                            if (hasRR73 || hasRRR) {
-                                // We received RR73 or RRR -> reply with 73 for one period.
-                                this.currentState = 'SENDING_73';
-                                this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
-                            } else {
-                                // Plain 73 -> QSO is finished, stop here (do not send RR73).
-                                this.onAppendQsoLog(`[QSO COMPLETE w/ ${this.targetCall}]`, false, true);
-                                if (this.targetCall) {
-                                    this.onLogQSO({
-                                        call: this.targetCall,
-                                        grid: this.targetGrid,
-                                        rst_sent: this.targetReport,
-                                        rst_rcvd: this.myReceivedReport
-                                    });
-                                }
-                                if (this.callerQueue.length > 0) {
-                                    const next = this.callerQueue.shift()!;
-                                    this.targetCall = next.callsign;
-                                    this.targetGrid = next.grid;
-                                    this.myReceivedReport = next.report || null;
-                                    const snr = next.receivedSnr ?? -12;
-                                    const formattedSnr = snr >= 0
-                                        ? `+${String(snr).padStart(2, '0')}`
-                                        : `-${String(Math.abs(snr)).padStart(2, '0')}`;
-                                    this.targetReport = formattedSnr;
-                                    this.currentState = next.report != null ? 'SENDING_R_REPORT' : 'SENDING_REPORT';
-                                    this.retryCount = 0;
-                                    this.hasTransmittedThisQso = false;
-                                    this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
-                                } else {
-                                    this.resetToIdle();
-                                }
-                            }
+                        if (hasRR73 || hasRRR) {
+                            // We received RR73 or RRR -> reply with 73 for one period.
+                            this.currentState = 'SENDING_73';
+                            this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
+                        }
+                        else if (has73) {
+                            // Plain 73 -> QSO is finished, stop here (do not send RR73).
+                            this.onAppendQsoLog(`[QSO COMPLETE w/ ${this.targetCall}]`, false, true);
+                            this.logCurrentQsoAndAdvance();
                         }
                         // 2. Check if they sent a signal report (e.g. -12, +04, R-12, R+04)
                         else if (/R?[+-]\d+/.test(upperContent)) {
@@ -374,7 +449,11 @@ export default class FT8FSM {
                         const reportMatch = upperContent.match(/R?([+-]\d+)/);
                         const report = reportMatch ? reportMatch[1] : null;
                         const receivedSnr = msgObj.snr !== undefined ? Math.round(msgObj.snr) : undefined;
-                        incomingCallers.push({ callsign: sender, grid, distance, report, receivedSnr });
+                        // Skip callers whose call we can't resolve yet (unresolved hash
+                        // or empty) — we cannot address a reply to "<...>".
+                        if (sender && sender !== '...') {
+                            incomingCallers.push({ callsign: sender, grid, distance, report, receivedSnr });
+                        }
                     }
                 }
             }
@@ -416,6 +495,7 @@ export default class FT8FSM {
                 : `-${String(Math.abs(snr)).padStart(2, '0')}`;
             this.targetReport = formattedSnr;
 
+            // If the caller already sent us a report, skip the grid exchange.
             this.currentState = topCaller.report != null ? 'SENDING_R_REPORT' : 'SENDING_REPORT';
             this.retryCount = 0;
             this.hasTransmittedThisQso = false;
