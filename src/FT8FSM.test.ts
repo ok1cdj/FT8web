@@ -1,136 +1,101 @@
 /**
- * Standalone test for compound / non-standard callsign QSO handling in FT8FSM.
- * No test framework. Run with:  npx tsx src/FT8FSM.test.ts
- * Exits non-zero on any failure.
+ * Behavioural tests for compound / non-standard callsign QSO handling in FT8FSM.
  *
- * Two things are verified:
- *  1. The FSM drives a complete QSO (CQ -> contact -> RR73/73 -> logged) when one
- *     side is a compound call, using the degraded no-report handshake.
- *  2. Every TX string the FSM produces actually packs as a real FT8 message
- *     (Type 4) rather than silently falling back to garbled 13-char free text —
- *     proved by an encode -> decode round-trip through @e04/ft8ts.
+ * The key property: a QSO where ONE side is a compound call (e.g. DL/OK1CDJ) runs
+ * the FULL report+grid handshake, with the compound call carried as its hash
+ * `<DL/OK1CDJ>` in every message except the CQ. This is the regression from the
+ * bug where the report exchange was skipped and the FSM jumped straight to RR73.
+ *
+ * Message layout is `ADDRESSEE SENDER [grid/report/closer]`, and renderCall() sends
+ * a standard call in full and a compound call as its hash.
  */
+import { describe, it, expect } from 'vitest';
+import { makeFSM, decoded, primedBook, isRealMessage } from './ft8-test-helpers.ts';
 
-import { encodeFT8, decodeFT8, HashCallBook } from '@e04/ft8ts';
-import FT8FSM from './FT8FSM.ts';
+describe('compound call — my call is compound, I call CQ (standard caller)', () => {
+  it('sends a report to the caller, then closes (regression: no jump to RR73)', () => {
+    const { fsm, txLog, logged } = makeFSM({ myCall: 'DL/OK1CDJ', currentState: 'CQ_SENDING' });
 
-let passed = 0;
-let failed = 0;
+    fsm.onPeriodStart(0); // my slot -> CQ (full compound call, no grid)
+    expect(txLog[0]).toBe('CQ DL/OK1CDJ');
 
-function ok(name: string, cond: boolean, detail?: string): void {
-  if (cond) {
-    passed++;
-  } else {
-    failed++;
-    console.error(`FAIL: ${name}${detail ? ` — ${detail}` : ''}`);
-  }
-}
+    // SV2FNT answers our (resolved) hashed call with a signal report -08, as WSJT-X does.
+    fsm.onPeriodDecodeReady([decoded('<DL/OK1CDJ> SV2FNT -08')], 1);
+    expect(fsm.targetCall).toBe('SV2FNT');
+    // Caller already sent a report -> we go to R-report, not to closure.
+    expect(fsm.currentState).toBe('SENDING_R_REPORT');
 
-/** Normalize a message to a comparable token set (brackets stripped, upper). */
-function tokenKey(msg: string): string {
-  return msg.trim().replace(/[<>]/g, '').toUpperCase().split(/\s+/).sort().join(' ');
-}
+    fsm.onPeriodStart(2); // -> R-report: the report the old code never sent
+    expect(txLog[1]).toBe('SV2FNT <DL/OK1CDJ> R-08');
 
-/** Encode a message and decode it back; returns the decoded text or ''. */
-function roundTrip(msg: string, book: HashCallBook): string {
-  const samples = encodeFT8(msg, { sampleRate: 12000, baseFrequency: 1500 });
-  const results = decodeFT8(samples, {
-    sampleRate: 12000,
-    hashCallBook: book,
-    freqLow: 200,
-    freqHigh: 3000,
+    // Their closer is addressed to an UNRESOLVED hash of our call — must still match
+    // because the sender is our in-progress target.
+    fsm.onPeriodDecodeReady([decoded('<...> SV2FNT RR73')], 3);
+    expect(fsm.currentState).toBe('SENDING_73');
+
+    fsm.onPeriodStart(4); // -> 73, QSO complete
+    expect(txLog[2]).toBe('SV2FNT <DL/OK1CDJ> 73');
+    expect(logged).toHaveLength(1);
+    expect(logged[0].call).toBe('SV2FNT');
+    expect(logged[0].rst_rcvd).toBe('-08');
   });
-  if (!results || results.length === 0) return '';
-  // Pick the decode closest to our injected 1500 Hz tone.
-  results.sort((a: any, b: any) => Math.abs(a.freq - 1500) - Math.abs(b.freq - 1500));
-  return results[0].msg;
-}
+});
 
-function makeFSM(overrides: Record<string, unknown>) {
-  const txLog: string[] = [];
-  const logged: any[] = [];
-  const fsm = new FT8FSM({
-    myGrid: 'JN88',
-    myPeriod: 0,
-    finalMessageMode: 'RR73',
-    isTxEnabled: true,
-    ...overrides,
+describe('compound call — my call is standard, I answer a compound station', () => {
+  it('exchanges grid then report with the compound target hashed', () => {
+    const { fsm, txLog, logged } = makeFSM({
+      myCall: 'W1AW', currentState: 'REPLY_SENDING', targetCall: 'DL/OK1CDJ',
+    });
+
+    fsm.onPeriodStart(0); // TX1 grid; target (compound) hashed, my call in full
+    expect(txLog[0]).toBe('<DL/OK1CDJ> W1AW JN88');
+
+    fsm.onPeriodDecodeReady([decoded('W1AW <DL/OK1CDJ> -05', -5)], 1);
+    expect(fsm.currentState).toBe('SENDING_R_REPORT');
+    expect(fsm.myReceivedReport).toBe('-05');
+
+    fsm.onPeriodStart(2);
+    expect(txLog[1]).toBe('<DL/OK1CDJ> W1AW R-05');
+
+    fsm.onPeriodDecodeReady([decoded('W1AW <DL/OK1CDJ> RR73')], 3);
+    fsm.onPeriodStart(4);
+    expect(txLog[2]).toBe('<DL/OK1CDJ> W1AW 73');
+    expect(logged).toHaveLength(1);
+    expect(logged[0].call).toBe('DL/OK1CDJ');
   });
-  fsm.onTransmit = (m) => txLog.push(m);
-  fsm.onLogQSO = (q) => logged.push(q);
-  return { fsm, txLog, logged };
-}
+});
 
-// ---------------------------------------------------------------------------
-// Scenario A: my call is compound; I call CQ and a standard station answers.
-// ---------------------------------------------------------------------------
-{
-  const { fsm, txLog, logged } = makeFSM({ myCall: 'OE/OK1CDJ', currentState: 'CQ_SENDING' });
-
-  fsm.onPeriodStart(0); // my slot -> CQ
-  ok('A: CQ has no grid (Type-4 CQ)', txLog[0] === 'CQ OE/OK1CDJ', `got "${txLog[0]}"`);
-
-  // W1AW answers our non-standard CQ (their TX carries our full call + their hash).
-  fsm.onPeriodDecodeReady([{ time: '', snr: -5, freq: 1500, message: 'OE/OK1CDJ <W1AW>' }], 1);
-  ok('A: picked up caller', fsm.targetCall === 'W1AW', `target=${fsm.targetCall}`);
-  ok('A: jumped straight to closure', fsm.currentState === 'SENDING_RR73', `state=${fsm.currentState}`);
-
-  fsm.onPeriodStart(2); // my slot -> RR73 (standard call wrapped in <...>)
-  ok('A: RR73 wraps standard call, sends compound in full',
-    txLog[1] === '<W1AW> OE/OK1CDJ RR73', `got "${txLog[1]}"`);
-  ok('A: QSO logged', logged.length === 1 && logged[0].call === 'W1AW',
-    JSON.stringify(logged));
-}
-
-// ---------------------------------------------------------------------------
-// Scenario B: my call is standard; I answer a compound station's CQ.
-// ---------------------------------------------------------------------------
-{
-  const { fsm, txLog, logged } = makeFSM({
-    myCall: 'W1AW', currentState: 'REPLY_SENDING', targetCall: 'OE/OK1CDJ',
+describe('receive matching is whole-token, not substring', () => {
+  it('does not treat a superstring or a grid as our callsign', () => {
+    const { fsm } = makeFSM({ myCall: 'OK1CDJ', currentState: 'CQ_SENDING' });
+    // OK1CDJX contains "OK1CDJ" as a substring but is a different station.
+    fsm.onPeriodDecodeReady([decoded('OK1CDJX SV2FNT JO70')], 1);
+    expect(fsm.currentState).toBe('CQ_SENDING'); // not engaged
+    expect(fsm.targetCall).toBeNull();
   });
+});
 
-  fsm.onPeriodStart(0); // bare contact, no grid/report
-  ok('B: contact wraps my standard call', txLog[0] === 'OE/OK1CDJ <W1AW>', `got "${txLog[0]}"`);
+describe('both-compound is out of scope (v1): skip rather than transmit garbage', () => {
+  it('does not transmit when both calls are non-standard', () => {
+    const { fsm, txLog } = makeFSM({
+      myCall: 'DL/OK1CDJ', currentState: 'SENDING_REPORT', targetCall: 'OE/OK5XX',
+    });
+    fsm.onPeriodStart(0);
+    expect(txLog).toHaveLength(0);
+    expect(fsm.currentState).toBe('IDLE');
+  });
+});
 
-  // Their reply is addressed to an UNRESOLVED hash of our call — must still match.
-  fsm.onPeriodDecodeReady([{ time: '', snr: -3, freq: 1500, message: '<...> OE/OK1CDJ RR73' }], 1);
-  ok('B: matched via unresolved hash', fsm.currentState === 'SENDING_73', `state=${fsm.currentState}`);
-
-  fsm.onPeriodStart(2); // -> 73
-  ok('B: sends 73', txLog[1] === 'OE/OK1CDJ <W1AW> 73', `got "${txLog[1]}"`);
-  ok('B: QSO logged with compound call', logged.length === 1 && logged[0].call === 'OE/OK1CDJ',
-    JSON.stringify(logged));
-}
-
-// ---------------------------------------------------------------------------
-// Encodability: every generated string round-trips as a real message.
-// ---------------------------------------------------------------------------
-{
-  const book = new HashCallBook();
-  book.save('W1AW');
-  book.save('OE/OK1CDJ');
-
-  const encodable = [
-    'CQ OE/OK1CDJ',
-    '<W1AW> OE/OK1CDJ RR73',
-    'OE/OK1CDJ <W1AW>',
-    'OE/OK1CDJ <W1AW> 73',
+describe('every generated string packs as a real message (not free text)', () => {
+  const book = primedBook(['DL/OK1CDJ', 'W1AW', 'SV2FNT']);
+  const generated = [
+    'CQ DL/OK1CDJ',
+    'SV2FNT <DL/OK1CDJ> R-08',
+    'SV2FNT <DL/OK1CDJ> 73',
+    '<DL/OK1CDJ> W1AW JN88',
+    '<DL/OK1CDJ> W1AW R-05',
   ];
-  for (const msg of encodable) {
-    const decoded = roundTrip(msg, book);
-    ok(`encode/decode round-trips: "${msg}"`, tokenKey(decoded) === tokenKey(msg),
-      `decoded "${decoded}"`);
-  }
-
-  // Control: the OLD (buggy) form with a report cannot pack with a compound call,
-  // so it falls back to free text and does NOT round-trip — this is the bug.
-  const buggy = 'W1AW OE/OK1CDJ R-12';
-  const decodedBuggy = roundTrip(buggy, book);
-  ok('control: report-bearing compound message does NOT round-trip (proves fallback)',
-    tokenKey(decodedBuggy) !== tokenKey(buggy), `decoded "${decodedBuggy}"`);
-}
-
-// ---------------------------------------------------------------------------
-console.log(`\n${passed} passed, ${failed} failed`);
-if (failed > 0) process.exit(1);
+  it.each(generated)('round-trips "%s"', (msg) => {
+    expect(isRealMessage(msg, book)).toBe(true);
+  });
+});

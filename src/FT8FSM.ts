@@ -127,30 +127,21 @@ export default class FT8FSM {
         return na !== '' && na === nb;
     }
 
-    /** True when either side of the current QSO is a non-standard (hashed) call. */
-    private involvesNonStandard(): boolean {
-        return !this.isStandardCall(this.myCall) || !this.isStandardCall(this.targetCall);
-    }
-
     /** True when BOTH sides are non-standard — unsupported in v1 (cannot exchange). */
     private bothNonStandard(): boolean {
         return !this.isStandardCall(this.myCall) && !this.isStandardCall(this.targetCall);
     }
 
     /**
-     * Build a Type-4-encodable message for a QSO involving a non-standard call.
-     * Exactly one of the pair is standard (v1 constraint); wrap the standard call
-     * in <...> so the encoder hashes it and sends the non-standard call in full.
-     * No grid or numeric report is ever included (Type 4 cannot carry them).
-     * `closure` is '' | 'RRR' | 'RR73' | '73'.
+     * Render a callsign for a QSO message. Standard calls are sent verbatim; a
+     * non-standard (compound) call is sent as its hash `<CALL>` so the message
+     * packs as a normal Type-1 frame that can carry a grid or a signal report.
+     * The full compound call travels only in the CQ (Type 4), which seeds the
+     * hash on every receiver so these `<CALL>` references resolve.
      */
-    private buildNonStandardTx(closure: string): string {
-        const wrap = (c: string | null) => `<${this.normalizeCall(c)}>`;
-        const addressee = this.isStandardCall(this.targetCall)
-            ? wrap(this.targetCall)
-            : (this.targetCall || '');
-        const sender = this.isStandardCall(this.myCall) ? wrap(this.myCall) : this.myCall;
-        return `${addressee} ${sender}${closure ? ' ' + closure : ''}`.trim();
+    private renderCall(call: string | null): string {
+        if (this.isStandardCall(call)) return (call || '').trim();
+        return `<${this.normalizeCall(call)}>`;
     }
 
     /**
@@ -178,11 +169,9 @@ export default class FT8FSM {
                 ? `+${String(snr).padStart(2, '0')}`
                 : `-${String(Math.abs(snr)).padStart(2, '0')}`;
             this.targetReport = formattedSnr;
-            // A non-standard next caller cannot exchange reports — jump straight to
-            // closure. Otherwise resume the normal report handshake.
-            this.currentState = this.involvesNonStandard()
-                ? (this.finalMessageMode === 'RRR' ? 'SENDING_RRR' : 'SENDING_RR73')
-                : (next.report != null ? 'SENDING_R_REPORT' : 'SENDING_REPORT');
+            // If the caller already sent us a report, skip the grid exchange and go
+            // straight to the R-report; otherwise start the normal report handshake.
+            this.currentState = next.report != null ? 'SENDING_R_REPORT' : 'SENDING_REPORT';
             this.retryCount = 0;
             this.hasTransmittedThisQso = false;
             this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
@@ -267,58 +256,43 @@ export default class FT8FSM {
             case 'IDLE':
                 break;
             case 'CQ_SENDING':
-                // A non-standard call goes out as a Type-4 CQ, which cannot carry a grid.
+                // The CQ is the only message that carries the compound call in full
+                // (Type 4) — it seeds our hash on every receiver. A Type-4 CQ cannot
+                // carry a grid, so drop it for a non-standard call.
                 txString = this.isStandardCall(this.myCall)
                     ? `CQ ${this.myCall} ${(this.myGrid || '').substring(0, 4)}`.trim()
                     : `CQ ${this.myCall}`;
                 break;
             case 'REPLY_SENDING':
-                if (this.involvesNonStandard()) {
-                    // Non-standard QSO: send a bare contact (no grid, no report) and keep
-                    // repeating until the other station acknowledges. The reply from them
-                    // (RR73/RRR/73, or any response) advances us in onPeriodDecodeReady.
-                    txString = this.buildNonStandardTx('');
-                } else if (this.directReportCall) {
+                if (this.directReportCall) {
                     // User opted to skip the grid (TX1) and send the report directly.
-                    txString = `${this.targetCall} ${this.myCall} ${this.targetReport || '-12'}`;
+                    txString = `${this.renderCall(this.targetCall)} ${this.renderCall(this.myCall)} ${this.targetReport || '-12'}`;
                     this.currentState = 'SENDING_REPORT';
                     this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
                 } else {
-                    txString = `${this.targetCall} ${this.myCall} ${(this.myGrid || '').substring(0, 4)}`.trim();
+                    txString = `${this.renderCall(this.targetCall)} ${this.renderCall(this.myCall)} ${(this.myGrid || '').substring(0, 4)}`.trim();
                 }
                 break;
-            case 'SENDING_REPORT':
-                if (this.involvesNonStandard()) {
-                    txString = this.buildNonStandardTx('');
-                } else {
-                    const repVal = this.targetReport || '-12';
-                    txString = `${this.targetCall} ${this.myCall} ${repVal}`;
-                }
+            case 'SENDING_REPORT': {
+                const repVal = this.targetReport || '-12';
+                txString = `${this.renderCall(this.targetCall)} ${this.renderCall(this.myCall)} ${repVal}`;
                 break;
-            case 'SENDING_R_REPORT':
-                if (this.involvesNonStandard()) {
-                    txString = this.buildNonStandardTx('');
-                } else {
-                    const repValR = this.targetReport || '-12';
-                    const rPrefix = repValR.startsWith('R') ? '' : 'R';
-                    txString = `${this.targetCall} ${this.myCall} ${rPrefix}${repValR}`;
-                }
+            }
+            case 'SENDING_R_REPORT': {
+                const repValR = this.targetReport || '-12';
+                const rPrefix = repValR.startsWith('R') ? '' : 'R';
+                txString = `${this.renderCall(this.targetCall)} ${this.renderCall(this.myCall)} ${rPrefix}${repValR}`;
                 break;
+            }
             case 'SENDING_RRR':
-                txString = this.involvesNonStandard()
-                    ? this.buildNonStandardTx('RRR')
-                    : `${this.targetCall} ${this.myCall} RRR`;
+                txString = `${this.renderCall(this.targetCall)} ${this.renderCall(this.myCall)} RRR`;
                 break;
             case 'SENDING_RR73':
-                txString = this.involvesNonStandard()
-                    ? this.buildNonStandardTx('RR73')
-                    : `${this.targetCall} ${this.myCall} RR73`;
+                txString = `${this.renderCall(this.targetCall)} ${this.renderCall(this.myCall)} RR73`;
                 completeQso = true;
                 break;
             case 'SENDING_73':
-                txString = this.involvesNonStandard()
-                    ? this.buildNonStandardTx('73')
-                    : `${this.targetCall} ${this.myCall} 73`;
+                txString = `${this.renderCall(this.targetCall)} ${this.renderCall(this.myCall)} 73`;
                 completeQso = true;
                 break;
         }
@@ -407,17 +381,6 @@ export default class FT8FSM {
                             // Plain 73 -> QSO is finished, stop here (do not send RR73).
                             this.onAppendQsoLog(`[QSO COMPLETE w/ ${this.targetCall}]`, false, true);
                             this.logCurrentQsoAndAdvance();
-                        }
-                        // Non-standard QSO: no report/grid is ever exchanged. Any
-                        // non-closure response acknowledges contact, so if we are the
-                        // answerer, advance straight to a closing RR73/RRR.
-                        else if (this.involvesNonStandard()) {
-                            if (this.currentState === 'REPLY_SENDING'
-                                || this.currentState === 'SENDING_REPORT'
-                                || this.currentState === 'SENDING_R_REPORT') {
-                                this.currentState = this.finalMessageMode === 'RRR' ? 'SENDING_RRR' : 'SENDING_RR73';
-                                this.onStateChange(this.currentState, this.targetCall, this.callerQueue);
-                            }
                         }
                         // 2. Check if they sent a signal report (e.g. -12, +04, R-12, R+04)
                         else if (/R?[+-]\d+/.test(upperContent)) {
@@ -523,10 +486,8 @@ export default class FT8FSM {
                 : `-${String(Math.abs(snr)).padStart(2, '0')}`;
             this.targetReport = formattedSnr;
 
-            // A non-standard target cannot exchange reports — go straight to closure.
-            this.currentState = this.involvesNonStandard()
-                ? (this.finalMessageMode === 'RRR' ? 'SENDING_RRR' : 'SENDING_RR73')
-                : (topCaller.report != null ? 'SENDING_R_REPORT' : 'SENDING_REPORT');
+            // If the caller already sent us a report, skip the grid exchange.
+            this.currentState = topCaller.report != null ? 'SENDING_R_REPORT' : 'SENDING_REPORT';
             this.retryCount = 0;
             this.hasTransmittedThisQso = false;
             this.onStateChange(this.currentState, this.targetCall, this.callerQueue);

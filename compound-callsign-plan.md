@@ -1,5 +1,17 @@
 # Compound / non-standard callsign support — design note
 
+> **Correction (superseded below):** The first implementation assumed a compound
+> QSO is degraded and cannot exchange signal reports (Type 4 only). That is
+> **wrong**. When exactly one call is non-standard, reports and grids ARE
+> exchanged by carrying the compound call as its **hash `<DL/OK1CDJ>`** inside a
+> normal **Type 1** message; the full compound call travels only in the `CQ`
+> (Type 4), which seeds the hash on all receivers. The FSM now renders any
+> compound call as its hash in every non-CQ message (`renderCall()` in
+> `src/FT8FSM.ts`) and runs the full report handshake. Only QSOs where BOTH calls
+> are non-standard remain unsupported (v1). See the follow-up plan
+> `~/.claude/plans/we-have-still-problems-floating-lemur.md`. The sections below
+> describe the original (partly superseded) analysis.
+
 ## Problem
 
 QSOs cannot be completed when the user's callsign (or the target's) is a
